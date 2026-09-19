@@ -1,0 +1,12 @@
+{
+  "name": "mcount",
+  "version": "1.0.0",
+  "description": "Simple quiz web app with admin console and participant view",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

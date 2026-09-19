@@ -1,0 +1,228 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quiz</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body { font-family: system-ui, sans-serif; background: #0f172a; color: #f1f5f9;
+      min-height: 100vh; padding: clamp(1rem, 3vw, 3rem); overflow: hidden; }
+
+    .timer {
+      position: fixed; top: clamp(.5rem, 2vw, 2rem); right: clamp(1rem, 3vw, 3rem);
+      font-size: clamp(2.5rem, 9vw, 10rem); font-weight: 800;
+      color: #38bdf8; font-variant-numeric: tabular-nums; line-height: 1;
+    }
+    .timer.low { color: #f87171; animation: pulse .5s infinite alternate; }
+    @keyframes pulse { to { transform: scale(1.15); } }
+
+    .meta {
+      position: fixed; top: clamp(.75rem, 2vw, 2rem); left: clamp(1rem, 3vw, 3rem);
+      color: #94a3b8; font-size: clamp(1rem, 2vw, 2rem);
+    }
+
+    .stage { height: 100vh; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; text-align: center;
+      padding: 0 clamp(1rem, 5vw, 6rem); }
+
+    .label {
+      color: #94a3b8; letter-spacing: .25em; text-transform: uppercase;
+      font-size: clamp(.9rem, 1.6vw, 1.8rem); margin-bottom: clamp(1rem, 2vw, 2rem);
+    }
+    .content {
+      font-size: clamp(2rem, 6vw, 7rem); font-weight: 600; line-height: 1.25;
+      max-width: 90vw; white-space: pre-wrap;
+    }
+    .answer .content { color: #4ade80; }
+
+    .btn {
+      padding: clamp(.75rem, 1.5vw, 1.5rem) clamp(1.5rem, 3vw, 3rem);
+      font-size: clamp(1.1rem, 2.2vw, 2.4rem);
+      border-radius: 12px; border: 0; cursor: pointer; font-weight: bold;
+    }
+    .start-btn { background: #38bdf8; color: #0f172a; }
+
+    .pause-btn {
+      position: fixed; left: clamp(1rem, 2.5vw, 2.5rem); bottom: clamp(1rem, 2.5vw, 2.5rem);
+      background: rgba(148, 163, 184, .18); color: #f1f5f9;
+      backdrop-filter: blur(4px);
+    }
+    .pause-btn:hover { background: rgba(148, 163, 184, .32); }
+
+    .paused-badge {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      font-size: clamp(3rem, 10vw, 12rem); font-weight: 900; color: #fbbf24;
+      letter-spacing: .1em; pointer-events: none; opacity: .85;
+    }
+  </style>
+</head>
+<body>
+  <div id="meta" class="meta"></div>
+  <div id="timer" class="timer"></div>
+  <div id="stage" class="stage">
+    <div class="label" id="label"></div>
+    <div class="content" id="content">Loading…</div>
+    <div id="ctrlWrap" style="margin-top: clamp(1.5rem, 3vw, 3rem);"></div>
+  </div>
+  <button id="pauseBtn" class="btn pause-btn" style="display:none" onclick="togglePause()">⏸ Pause</button>
+  <div id="pausedBadge" class="paused-badge" style="display:none">PAUSED</div>
+
+  <script>
+    const quizId = location.pathname.split('/').pop();
+    let state = null;
+    let audioCtx = null;
+    let audioReady = false;
+    let lastBeepSec = -1;
+
+    let localStart = null;
+    let pausedAt = null;
+    let pausedOffsetMs = 0;
+
+    function ensureAudio() {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      audioReady = true;
+    }
+
+    function beep(freq = 880, duration = 0.18) {
+      if (!audioReady) return;
+      try {
+        const o = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        o.frequency.value = freq; o.type = 'sine';
+        g.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.3, audioCtx.currentTime + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+        o.connect(g).connect(audioCtx.destination);
+        o.start(); o.stop(audioCtx.currentTime + duration);
+      } catch (e) {}
+    }
+
+    async function poll() {
+      try {
+        const r = await fetch('/api/current/' + quizId);
+        if (r.ok) state = await r.json();
+        else state = { notFound: true };
+      } catch (e) {}
+    }
+
+    function startQuiz() {
+      ensureAudio();
+      localStart = Date.now();
+      pausedAt = null;
+      pausedOffsetMs = 0;
+      document.getElementById('ctrlWrap').innerHTML = '';
+      const pb = document.getElementById('pauseBtn');
+      pb.style.display = '';
+      pb.textContent = '⏸ Pause';
+    }
+
+    function togglePause() {
+      const btn = document.getElementById('pauseBtn');
+      const badge = document.getElementById('pausedBadge');
+      if (pausedAt === null) {
+        pausedAt = Date.now();
+        btn.textContent = '▶ Resume';
+        badge.style.display = '';
+      } else {
+        pausedOffsetMs += Date.now() - pausedAt;
+        pausedAt = null;
+        btn.textContent = '⏸ Pause';
+        badge.style.display = 'none';
+      }
+    }
+
+    function elapsedSec() {
+      const nowRef = pausedAt !== null ? pausedAt : Date.now();
+      return (nowRef - localStart - pausedOffsetMs) / 1000;
+    }
+
+    function render() {
+      const contentEl = document.getElementById('content');
+      const labelEl = document.getElementById('label');
+      const timerEl = document.getElementById('timer');
+      const metaEl = document.getElementById('meta');
+      const stage = document.getElementById('stage');
+      const ctrlWrap = document.getElementById('ctrlWrap');
+      const pauseBtn = document.getElementById('pauseBtn');
+
+      if (!state) return;
+      if (state.notFound) {
+        labelEl.textContent = ''; contentEl.textContent = 'Quiz not found.';
+        timerEl.textContent = ''; metaEl.textContent = '';
+        ctrlWrap.innerHTML = ''; pauseBtn.style.display = 'none';
+        return;
+      }
+      if (!state.published || !state.questions.length) {
+        labelEl.textContent = '';
+        contentEl.textContent = 'Waiting for quiz to start…';
+        timerEl.textContent = '';
+        metaEl.textContent = state.name || '';
+        stage.classList.remove('answer');
+        ctrlWrap.innerHTML = ''; pauseBtn.style.display = 'none';
+        localStart = null;
+        return;
+      }
+
+      if (localStart === null) {
+        labelEl.textContent = 'Ready';
+        contentEl.textContent = `${state.name} · ${state.questions.length} question(s)`;
+        timerEl.textContent = ''; metaEl.textContent = '';
+        stage.classList.remove('answer');
+        pauseBtn.style.display = 'none';
+        if (!ctrlWrap.querySelector('button')) {
+          ctrlWrap.innerHTML = '<button class="btn start-btn" id="startBtn">▶ Start Quiz</button>';
+          document.getElementById('startBtn').onclick = startQuiz;
+        }
+        return;
+      }
+
+      const dur = state.durationSeconds;
+      const ans = state.answerSeconds;
+      const slot = dur + ans;
+      const elapsed = elapsedSec();
+      if (elapsed < 0) return;
+      const idx = Math.floor(elapsed / slot);
+      if (idx >= state.questions.length) {
+        labelEl.textContent = '';
+        contentEl.textContent = 'Quiz complete.';
+        timerEl.textContent = ''; metaEl.textContent = '';
+        stage.classList.remove('answer');
+        pauseBtn.style.display = 'none';
+        return;
+      }
+      const inSlot = elapsed - idx * slot;
+      const q = state.questions[idx];
+      metaEl.textContent = `${state.name} · ${idx + 1} / ${state.questions.length}`;
+
+      if (inSlot < dur) {
+        const remaining = Math.ceil(dur - inSlot);
+        labelEl.textContent = 'Question';
+        contentEl.textContent = q.text;
+        stage.classList.remove('answer');
+        timerEl.textContent = remaining;
+        timerEl.classList.toggle('low', remaining <= 5);
+        if (pausedAt === null && remaining <= 5 && remaining >= 1 && remaining !== lastBeepSec) {
+          lastBeepSec = remaining;
+          beep(remaining === 1 ? 1200 : 880, 0.18);
+        }
+        if (remaining > 5) lastBeepSec = -1;
+      } else {
+        const remaining = Math.ceil(slot - inSlot);
+        labelEl.textContent = 'Answer';
+        contentEl.textContent = q.answer || '(no answer provided)';
+        stage.classList.add('answer');
+        timerEl.textContent = remaining;
+        timerEl.classList.remove('low');
+        lastBeepSec = -1;
+      }
+    }
+
+    poll();
+    setInterval(poll, 2000);
+    setInterval(render, 100);
+  </script>
+</body>
+</html>

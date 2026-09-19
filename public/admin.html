@@ -1,0 +1,289 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MCount Admin</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #0f172a; }
+    h1, h2, h3 { margin-top: 0; }
+    input, button, textarea, select { font: inherit; padding: .5rem; }
+    button { cursor: pointer; margin-right: .3rem; }
+    .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin: .5rem 0; }
+    .status { padding: .75rem; background: #f1f5f9; border-radius: 6px; margin: 1rem 0; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { text-align: left; padding: .6rem .5rem; border-bottom: 1px solid #e2e8f0; }
+    th { background: #f8fafc; }
+    .badge { display: inline-block; padding: .15rem .55rem; border-radius: 999px; font-size: .8rem; font-weight: 600; }
+    .badge.pub { background: #dcfce7; color: #166534; }
+    .badge.draft { background: #fef3c7; color: #92400e; }
+    .url { font-family: monospace; font-size: .85rem; word-break: break-all; color: #475569; }
+    .hidden { display: none; }
+    ul { padding-left: 1.2rem; }
+    li { margin: .4rem 0; }
+    li .a { color: #059669; margin-left: .5rem; }
+    details { margin: 1rem 0; padding: .75rem; background: #f8fafc; border-radius: 6px; }
+    code { background: #e2e8f0; padding: .1rem .3rem; border-radius: 3px; }
+    .toolbar { display: flex; justify-content: space-between; align-items: center; }
+    a.link { color: #0369a1; cursor: pointer; text-decoration: underline; }
+    .danger { color: #b91c1c; }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <h1>MCount Admin</h1>
+    <div><label>Token: <input id="token" type="password" style="width:140px" /></label>
+      <button onclick="saveToken()">Set</button></div>
+  </div>
+
+  <!-- Dashboard -->
+  <section id="dashboard">
+    <h2>Quizzes</h2>
+    <div class="row">
+      <input id="newName" placeholder="New quiz name" style="flex:1;min-width:200px" />
+      <button onclick="createQuiz()">➕ Create quiz</button>
+    </div>
+    <table>
+      <thead><tr><th>Name</th><th>Questions</th><th>Status</th><th>URL</th><th>Actions</th></tr></thead>
+      <tbody id="qtable"><tr><td colspan="5">Enter token to load quizzes.</td></tr></tbody>
+    </table>
+  </section>
+
+  <!-- Editor -->
+  <section id="editor" class="hidden">
+    <div class="row"><a class="link" onclick="showDashboard()">← Back to dashboard</a></div>
+
+    <div class="row">
+      <input id="quizName" style="flex:1;min-width:200px;font-size:1.3rem;font-weight:bold" />
+      <button onclick="renameQuiz()">Rename</button>
+    </div>
+
+    <div id="status" class="status"></div>
+
+    <h3>Participant URL</h3>
+    <div class="url" id="purl"></div>
+
+    <h3>Settings</h3>
+    <div class="row">
+      <label>Question duration (seconds): <input id="duration" type="number" min="1" /></label>
+      <button onclick="setDuration()">Save</button>
+      <span style="color:#64748b">Answer shown for 5 s after each question.</span>
+    </div>
+
+    <h3>Questions</h3>
+    <div class="row">
+      <input id="qtext" placeholder="Question" style="flex:1;min-width:200px" />
+      <input id="qans" placeholder="Answer" style="flex:1;min-width:200px" />
+      <button onclick="addQuestion()">Add</button>
+    </div>
+
+    <details>
+      <summary>Upload questions from file</summary>
+      <p>Supported formats:</p>
+      <ul>
+        <li>JSON: <code>[{"text":"Q1","answer":"A1"}, ...]</code></li>
+        <li>Pipe-separated per line: <code>question | answer</code></li>
+        <li>Paired lines: <code>Q: ...</code> then <code>A: ...</code></li>
+      </ul>
+      <div class="row">
+        <input type="file" id="file" accept=".json,.txt,.csv" />
+        <button onclick="uploadFile()">Upload (replaces list)</button>
+        <button class="danger" onclick="clearAll()">Clear all</button>
+      </div>
+    </details>
+
+    <ul id="qlist"></ul>
+
+    <h3>Control</h3>
+    <div class="row">
+      <button onclick="ctrl('publish')">Publish</button>
+      <button onclick="ctrl('unpublish')">Unpublish</button>
+    </div>
+  </section>
+
+  <script>
+    let token = localStorage.getItem('mcount_token') || '';
+    let currentId = null;
+    let refreshTimer = null;
+    document.getElementById('token').value = token;
+
+    function saveToken() {
+      token = document.getElementById('token').value;
+      localStorage.setItem('mcount_token', token);
+      route();
+    }
+
+    async function api(path, opts = {}) {
+      opts.headers = Object.assign({ 'X-Admin-Token': token }, opts.headers || {});
+      if (opts.body && typeof opts.body === 'object' && !(opts.body instanceof Blob) && typeof opts.body !== 'string') {
+        opts.headers['Content-Type'] = 'application/json';
+        opts.body = JSON.stringify(opts.body);
+      }
+      const r = await fetch(path, opts);
+      if (r.status === 401) { alert('Unauthorized. Check token.'); throw new Error('401'); }
+      if (!r.ok) { const t = await r.text(); alert('Error: ' + t); throw new Error(t); }
+      return r.json();
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+    }
+
+    // ---------- Dashboard ----------
+    async function loadDashboard() {
+      if (!token) return;
+      try {
+        const list = await api('/api/admin/quizzes');
+        const tbody = document.getElementById('qtable');
+        if (!list.length) {
+          tbody.innerHTML = '<tr><td colspan="5">No quizzes yet. Create one above.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = '';
+        for (const q of list) {
+          const tr = document.createElement('tr');
+          const url = location.origin + '/q/' + q.id;
+          tr.innerHTML = `
+            <td><a class="link" data-id="${q.id}">${escapeHtml(q.name)}</a></td>
+            <td>${q.questionCount}</td>
+            <td><span class="badge ${q.published ? 'pub' : 'draft'}">${q.published ? 'Published' : 'Draft'}</span></td>
+            <td><a class="url" href="${url}" target="_blank">${url}</a></td>
+            <td>
+              <button data-act="edit" data-id="${q.id}">Edit</button>
+              <button data-act="toggle" data-id="${q.id}">${q.published ? 'Unpublish' : 'Publish'}</button>
+              <button data-act="copy" data-id="${q.id}">Copy URL</button>
+              <button class="danger" data-act="delete" data-id="${q.id}">Delete</button>
+            </td>`;
+          tbody.appendChild(tr);
+        }
+        tbody.querySelectorAll('[data-act], a.link[data-id]').forEach(el => {
+          el.addEventListener('click', async (ev) => {
+            ev.preventDefault();
+            const id = el.dataset.id;
+            const act = el.dataset.act || 'edit';
+            if (act === 'edit') { location.hash = '#/quiz/' + id; }
+            else if (act === 'toggle') {
+              const q = list.find(x => x.id === id);
+              await api(`/api/admin/quizzes/${id}/${q.published ? 'unpublish' : 'publish'}`, { method: 'POST' });
+              loadDashboard();
+            } else if (act === 'copy') {
+              navigator.clipboard.writeText(location.origin + '/q/' + id);
+            } else if (act === 'delete') {
+              if (confirm('Delete this quiz?')) {
+                await api('/api/admin/quizzes/' + id, { method: 'DELETE' });
+                loadDashboard();
+              }
+            }
+          });
+        });
+      } catch (e) {}
+    }
+
+    async function createQuiz() {
+      const name = document.getElementById('newName').value.trim();
+      if (!name) return;
+      const q = await api('/api/admin/quizzes', { method: 'POST', body: { name } });
+      document.getElementById('newName').value = '';
+      location.hash = '#/quiz/' + q.id;
+    }
+
+    // ---------- Editor ----------
+    async function loadEditor() {
+      if (!token || !currentId) return;
+      try {
+        const q = await api('/api/admin/quizzes/' + currentId);
+        renderEditor(q);
+      } catch (e) {}
+    }
+
+    function renderEditor(q) {
+      document.getElementById('quizName').value = q.name;
+      document.getElementById('duration').value = q.durationSeconds;
+      document.getElementById('purl').textContent = location.origin + '/q/' + q.id;
+      const s = document.getElementById('status');
+      if (q.published) { s.style.background = '#dcfce7'; s.textContent = `PUBLISHED — ${q.questions.length} question(s).`; }
+      else { s.style.background = '#fef3c7'; s.textContent = `Draft — ${q.questions.length} question(s).`; }
+      const ul = document.getElementById('qlist');
+      ul.innerHTML = '';
+      q.questions.forEach((qq, i) => {
+        const li = document.createElement('li');
+        li.innerHTML = `<b>${escapeHtml(qq.text)}</b><span class="a">→ ${escapeHtml(qq.answer || '(no answer)')}</span> `;
+        const btn = document.createElement('button');
+        btn.textContent = '✕';
+        btn.onclick = () => del(i);
+        li.appendChild(btn);
+        ul.appendChild(li);
+      });
+    }
+
+    async function renameQuiz() {
+      const name = document.getElementById('quizName').value.trim();
+      if (!name) return;
+      await api(`/api/admin/quizzes/${currentId}/rename`, { method: 'POST', body: { name } });
+      loadEditor();
+    }
+    async function setDuration() {
+      const durationSeconds = parseInt(document.getElementById('duration').value, 10);
+      await api(`/api/admin/quizzes/${currentId}/duration`, { method: 'POST', body: { durationSeconds } });
+      loadEditor();
+    }
+    async function addQuestion() {
+      const text = document.getElementById('qtext').value.trim();
+      const answer = document.getElementById('qans').value.trim();
+      if (!text) return;
+      await api(`/api/admin/quizzes/${currentId}/questions`, { method: 'POST', body: { text, answer } });
+      document.getElementById('qtext').value = '';
+      document.getElementById('qans').value = '';
+      loadEditor();
+    }
+    async function del(i) {
+      await api(`/api/admin/quizzes/${currentId}/questions/${i}`, { method: 'DELETE' });
+      loadEditor();
+    }
+    async function ctrl(action) {
+      await api(`/api/admin/quizzes/${currentId}/${action}`, { method: 'POST' });
+      loadEditor();
+    }
+    async function clearAll() {
+      if (!confirm('Delete all questions in this quiz?')) return;
+      await api(`/api/admin/quizzes/${currentId}/clear`, { method: 'POST' });
+      loadEditor();
+    }
+    async function uploadFile() {
+      const f = document.getElementById('file').files[0];
+      if (!f) { alert('Choose a file first.'); return; }
+      const text = await f.text();
+      await api(`/api/admin/quizzes/${currentId}/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: text
+      });
+      document.getElementById('file').value = '';
+      loadEditor();
+    }
+
+    // ---------- Routing ----------
+    function showDashboard() { location.hash = ''; }
+    function route() {
+      clearInterval(refreshTimer);
+      const m = location.hash.match(/^#\/quiz\/([a-z0-9]+)/i);
+      if (m) {
+        currentId = m[1];
+        document.getElementById('dashboard').classList.add('hidden');
+        document.getElementById('editor').classList.remove('hidden');
+        loadEditor();
+        refreshTimer = setInterval(loadEditor, 4000);
+      } else {
+        currentId = null;
+        document.getElementById('dashboard').classList.remove('hidden');
+        document.getElementById('editor').classList.add('hidden');
+        loadDashboard();
+        refreshTimer = setInterval(loadDashboard, 4000);
+      }
+    }
+
+    window.addEventListener('hashchange', route);
+    route();
+  </script>
+</body>
+</html>
