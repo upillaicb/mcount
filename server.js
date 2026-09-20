@@ -70,13 +70,15 @@ app.get('/api/current/:id', (req, res) => {
   const d = loadData();
   const q = d.quizzes[req.params.id];
   if (!q) return res.status(404).json({ error: 'not found' });
+  const participants = (q.participants || []).slice().sort((a, b) => b.score - a.score);
   res.json({
     id: q.id,
     name: q.name,
     published: q.published,
     durationSeconds: q.durationSeconds,
     answerSeconds: q.answerSeconds || ANSWER_SECONDS,
-    questions: q.published ? q.questions : []
+    questions: q.published ? q.questions : [],
+    participants
   });
 });
 
@@ -96,7 +98,7 @@ app.post('/api/admin/quizzes', requireAdmin, (req, res) => {
   const id = newId();
   d.quizzes[id] = {
     id, name, durationSeconds: 30, answerSeconds: ANSWER_SECONDS,
-    published: false, questions: []
+    published: false, questions: [], participants: []
   };
   saveData(d);
   res.json(d.quizzes[id]);
@@ -153,6 +155,37 @@ app.post('/api/admin/quizzes/:id/publish', requireAdmin, (req, res) => {
 
 app.post('/api/admin/quizzes/:id/unpublish', requireAdmin, (req, res) => {
   withQuiz(req, res, q => { q.published = false; });
+});
+
+app.post('/api/admin/quizzes/:id/participants', requireAdmin, (req, res) => {
+  withQuiz(req, res, q => {
+    const name = (req.body.name || '').trim();
+    if (!name) { res.status(400).json({ error: 'name required' }); return false; }
+    q.participants = q.participants || [];
+    q.participants.push({ id: newId(), name, score: 0 });
+  });
+});
+
+app.delete('/api/admin/quizzes/:id/participants/:pid', requireAdmin, (req, res) => {
+  withQuiz(req, res, q => {
+    q.participants = (q.participants || []).filter(p => p.id !== req.params.pid);
+  });
+});
+
+app.post('/api/admin/quizzes/:id/participants/:pid/score', requireAdmin, (req, res) => {
+  withQuiz(req, res, q => {
+    const delta = parseInt(req.body.delta, 10);
+    if (!Number.isFinite(delta)) { res.status(400).json({ error: 'delta required' }); return false; }
+    const p = (q.participants || []).find(p => p.id === req.params.pid);
+    if (!p) { res.status(404).json({ error: 'participant not found' }); return false; }
+    p.score += delta;
+  });
+});
+
+app.post('/api/admin/quizzes/:id/participants/reset', requireAdmin, (req, res) => {
+  withQuiz(req, res, q => {
+    (q.participants || []).forEach(p => { p.score = 0; });
+  });
 });
 
 app.post('/api/admin/quizzes/:id/upload', requireAdmin, (req, res) => {

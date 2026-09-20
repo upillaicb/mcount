@@ -56,9 +56,41 @@
       font-size: clamp(3rem, 10vw, 12rem); font-weight: 900; color: #fbbf24;
       letter-spacing: .1em; pointer-events: none; opacity: .85;
     }
+
+    .leaderboard {
+      position: fixed; right: clamp(1rem, 2.5vw, 2.5rem); bottom: clamp(1rem, 2.5vw, 2.5rem);
+      background: rgba(15, 23, 42, .7); border: 1px solid rgba(148, 163, 184, .25);
+      border-radius: 12px; padding: clamp(.5rem, 1vw, 1rem) clamp(.8rem, 1.5vw, 1.5rem);
+      backdrop-filter: blur(4px); min-width: clamp(180px, 22vw, 340px); max-height: 45vh;
+      overflow: hidden; font-size: clamp(.9rem, 1.4vw, 1.6rem);
+    }
+    .leaderboard h4 {
+      margin: 0 0 .4rem; font-size: clamp(.8rem, 1.2vw, 1.2rem);
+      color: #94a3b8; letter-spacing: .2em; text-transform: uppercase; font-weight: 600;
+    }
+    .leaderboard ol { list-style: none; padding: 0; margin: 0; }
+    .leaderboard li { display: flex; justify-content: space-between; gap: 1rem;
+      padding: .2rem 0; border-bottom: 1px solid rgba(148, 163, 184, .1); }
+    .leaderboard li:last-child { border-bottom: 0; }
+    .leaderboard .score { font-weight: 700; color: #38bdf8; font-variant-numeric: tabular-nums; }
+    .leaderboard li.top .score { color: #fbbf24; }
+
+    #confetti {
+      position: fixed; inset: 0; pointer-events: none; z-index: 5;
+    }
+    .celebrate .content {
+      background: linear-gradient(90deg, #fbbf24, #f472b6, #38bdf8, #4ade80, #fbbf24);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+      animation: shine 3s linear infinite;
+      background-size: 200% 100%;
+    }
+    @keyframes shine { to { background-position: -200% 0; } }
+    .winner-name { font-size: clamp(2.5rem, 8vw, 9rem); font-weight: 900; }
+    .winner-sub { font-size: clamp(1.2rem, 2.5vw, 2.5rem); color: #94a3b8; margin-top: 1rem; }
   </style>
 </head>
 <body>
+  <canvas id="confetti"></canvas>
   <div id="meta" class="meta"></div>
   <div id="timer" class="timer"></div>
   <div id="stage" class="stage">
@@ -68,6 +100,10 @@
   </div>
   <button id="pauseBtn" class="btn pause-btn" style="display:none" onclick="togglePause()">⏸ Pause</button>
   <div id="pausedBadge" class="paused-badge" style="display:none">PAUSED</div>
+  <div id="leaderboard" class="leaderboard" style="display:none">
+    <h4>Scores</h4>
+    <ol id="lbList"></ol>
+  </div>
 
   <script>
     const quizId = location.pathname.split('/').pop();
@@ -79,6 +115,7 @@
     let localStart = null;
     let pausedAt = null;
     let pausedOffsetMs = 0;
+    let celebrated = false;
 
     function ensureAudio() {
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -100,12 +137,117 @@
       } catch (e) {}
     }
 
+    function playFanfare() {
+      if (!audioReady) return;
+      const now = audioCtx.currentTime;
+      // Triumphant sequence: C major arpeggios rising, then held chord.
+      const notes = [
+        [523.25, 0.00, 0.15], [659.25, 0.15, 0.15], [783.99, 0.30, 0.15], [1046.5, 0.45, 0.35],
+        [698.46, 0.85, 0.15], [880.00, 1.00, 0.15], [1046.5, 1.15, 0.15], [1318.5, 1.30, 0.35],
+        [1046.5, 1.75, 0.9], [1318.5, 1.75, 0.9], [1567.98, 1.75, 0.9]
+      ];
+      for (const [f, t, d] of notes) {
+        const o = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        o.type = 'triangle'; o.frequency.value = f;
+        g.gain.setValueAtTime(0.0001, now + t);
+        g.gain.exponentialRampToValueAtTime(0.25, now + t + 0.03);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + t + d);
+        o.connect(g).connect(audioCtx.destination);
+        o.start(now + t); o.stop(now + t + d + 0.05);
+      }
+    }
+
+    // ---------- Confetti ----------
+    const confettiCanvas = document.getElementById('confetti');
+    const cctx = confettiCanvas.getContext('2d');
+    let confettiPieces = [];
+    let confettiRunning = false;
+
+    function sizeConfetti() {
+      confettiCanvas.width = window.innerWidth;
+      confettiCanvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', sizeConfetti);
+    sizeConfetti();
+
+    function launchConfetti() {
+      const colors = ['#fbbf24', '#f472b6', '#38bdf8', '#4ade80', '#f87171', '#a78bfa'];
+      for (let i = 0; i < 220; i++) {
+        confettiPieces.push({
+          x: Math.random() * confettiCanvas.width,
+          y: -20 - Math.random() * confettiCanvas.height * 0.5,
+          w: 6 + Math.random() * 8, h: 8 + Math.random() * 10,
+          vx: (Math.random() - 0.5) * 3,
+          vy: 2 + Math.random() * 4,
+          rot: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 0.2,
+          color: colors[Math.floor(Math.random() * colors.length)]
+        });
+      }
+      if (!confettiRunning) { confettiRunning = true; requestAnimationFrame(animConfetti); }
+    }
+
+    function animConfetti() {
+      cctx.clearRect(0, 0, confettiCanvas.width, confettiCanvas.height);
+      for (const p of confettiPieces) {
+        p.x += p.vx; p.y += p.vy; p.rot += p.vr; p.vy += 0.02;
+        cctx.save();
+        cctx.translate(p.x, p.y); cctx.rotate(p.rot);
+        cctx.fillStyle = p.color;
+        cctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        cctx.restore();
+      }
+      confettiPieces = confettiPieces.filter(p => p.y < confettiCanvas.height + 30);
+      if (confettiPieces.length) requestAnimationFrame(animConfetti);
+      else { confettiRunning = false; cctx.clearRect(0, 0, confettiCanvas.width, confettiCanvas.height); }
+    }
+
+    function celebrate(winners, score) {
+      if (celebrated) return;
+      celebrated = true;
+      const contentEl = document.getElementById('content');
+      const labelEl = document.getElementById('label');
+      const stage = document.getElementById('stage');
+      stage.classList.add('celebrate');
+      const isTie = winners.length > 1;
+      const names = winners.map(w => escapeHtml(w.name)).join(' &amp; ');
+      labelEl.textContent = isTie ? '🎉 It\'s a tie! 🎉' : '🎉 Winner 🎉';
+      contentEl.innerHTML =
+        `<div class="winner-name">${names}</div>` +
+        `<div class="winner-sub">${score} point${score === 1 ? '' : 's'}${isTie ? ' — shared victory!' : ''}</div>`;
+      launchConfetti();
+      playFanfare();
+      // second burst
+      setTimeout(launchConfetti, 1500);
+      setTimeout(launchConfetti, 3200);
+    }
+
     async function poll() {
       try {
         const r = await fetch('/api/current/' + quizId);
         if (r.ok) state = await r.json();
         else state = { notFound: true };
       } catch (e) {}
+      renderLeaderboard();
+    }
+
+    function renderLeaderboard() {
+      const box = document.getElementById('leaderboard');
+      const list = document.getElementById('lbList');
+      const ps = (state && state.participants) || [];
+      if (!ps.length) { box.style.display = 'none'; return; }
+      box.style.display = '';
+      list.innerHTML = '';
+      ps.forEach((p, i) => {
+        const li = document.createElement('li');
+        if (i === 0) li.className = 'top';
+        li.innerHTML = `<span>${i + 1}. ${escapeHtml(p.name)}</span><span class="score">${p.score}</span>`;
+        list.appendChild(li);
+      });
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
     }
 
     function startQuiz() {
@@ -113,6 +255,8 @@
       localStart = Date.now();
       pausedAt = null;
       pausedOffsetMs = 0;
+      celebrated = false;
+      document.getElementById('stage').classList.remove('celebrate');
       document.getElementById('ctrlWrap').innerHTML = '';
       const pb = document.getElementById('pauseBtn');
       pb.style.display = '';
@@ -186,11 +330,18 @@
       if (elapsed < 0) return;
       const idx = Math.floor(elapsed / slot);
       if (idx >= state.questions.length) {
-        labelEl.textContent = '';
-        contentEl.textContent = 'Quiz complete.';
-        timerEl.textContent = ''; metaEl.textContent = '';
-        stage.classList.remove('answer');
+        const ps = (state.participants || []).slice().sort((a, b) => b.score - a.score);
         pauseBtn.style.display = 'none';
+        timerEl.textContent = ''; metaEl.textContent = state.name || '';
+        if (ps.length && ps[0].score > 0) {
+          const top = ps[0].score;
+          const winners = ps.filter(p => p.score === top);
+          celebrate(winners, top);
+        } else {
+          labelEl.textContent = '';
+          contentEl.textContent = 'Quiz complete.';
+          stage.classList.remove('answer');
+        }
         return;
       }
       const inSlot = elapsed - idx * slot;
