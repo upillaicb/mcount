@@ -197,8 +197,11 @@
     }
 
     function renderEditor(q) {
-      document.getElementById('quizName').value = q.name;
-      document.getElementById('duration').value = q.durationSeconds;
+      const active = document.activeElement;
+      const nameEl = document.getElementById('quizName');
+      const durEl = document.getElementById('duration');
+      if (active !== nameEl) nameEl.value = q.name;
+      if (active !== durEl) durEl.value = q.durationSeconds;
       document.getElementById('purl').textContent = location.origin + '/q/' + q.id;
       const s = document.getElementById('status');
       if (q.published) { s.style.background = '#dcfce7'; s.textContent = `PUBLISHED — ${q.questions.length} question(s).`; }
