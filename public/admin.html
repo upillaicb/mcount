@@ -91,7 +91,10 @@
     <div class="row">
       <label>Question duration (seconds): <input id="duration" type="number" min="1" /></label>
       <button onclick="setDuration()">Save</button>
-      <span style="color:#64748b">Answer shown for 5 s after each question.</span>
+    </div>
+    <div class="row">
+      <label>Answer duration (seconds): <input id="ansDuration" type="number" min="1" /></label>
+      <button onclick="setAnswerDuration()">Save</button>
     </div>
 
     <h3>Questions</h3>
@@ -258,8 +261,10 @@
       const active = document.activeElement;
       const nameEl = document.getElementById('quizName');
       const durEl = document.getElementById('duration');
+      const ansEl = document.getElementById('ansDuration');
       if (active !== nameEl) nameEl.value = q.name;
       if (active !== durEl) durEl.value = q.durationSeconds;
+      if (active !== ansEl) ansEl.value = q.answerSeconds;
       document.getElementById('purl').textContent = location.origin + '/q/' + q.id;
       const s = document.getElementById('status');
       if (q.published) { s.style.background = '#dcfce7'; s.textContent = `PUBLISHED — ${q.questions.length} question(s).`; }
@@ -336,6 +341,11 @@
     async function setDuration() {
       const durationSeconds = parseInt(document.getElementById('duration').value, 10);
       await api(`/api/admin/quizzes/${currentId}/duration`, { method: 'POST', body: { durationSeconds } });
+      loadEditor();
+    }
+    async function setAnswerDuration() {
+      const answerSeconds = parseInt(document.getElementById('ansDuration').value, 10);
+      await api(`/api/admin/quizzes/${currentId}/answer-duration`, { method: 'POST', body: { answerSeconds } });
       loadEditor();
     }
     async function addQuestion() {

@@ -130,6 +130,13 @@ app.post('/api/admin/quizzes/:id/duration', requireAdmin, (req, res) => {
   });
 });
 
+app.post('/api/admin/quizzes/:id/answer-duration', requireAdmin, (req, res) => {
+  withQuiz(req, res, q => {
+    const n = parseInt(req.body.answerSeconds, 10);
+    q.answerSeconds = Number.isFinite(n) && n > 0 ? n : (q.answerSeconds || ANSWER_SECONDS);
+  });
+});
+
 app.post('/api/admin/quizzes/:id/questions', requireAdmin, (req, res) => {
   withQuiz(req, res, q => {
     const { text, answer } = req.body;
