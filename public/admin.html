@@ -87,7 +87,13 @@
     <h3>Participant URL</h3>
     <div class="row">
       <span class="url" id="purl"></span>
-      <button onclick="changeSlug()">Change URL</button>
+      <button onclick="showSlugEditor()">Change URL</button>
+    </div>
+    <div id="slugEditor" class="row hidden">
+      <span class="url" id="slugPrefix"></span>
+      <input id="slugInput" placeholder="new-slug" style="min-width:180px" />
+      <button onclick="saveSlug()">Save</button>
+      <button onclick="hideSlugEditor()">Cancel</button>
     </div>
 
     <h3>Settings</h3>
@@ -157,9 +163,10 @@
         opts.headers['Content-Type'] = 'application/json';
         opts.body = JSON.stringify(opts.body);
       }
+      const silent = opts.silent;
       const r = await fetch(path, opts);
-      if (r.status === 401) { alert('Unauthorized. Check token.'); throw new Error('401'); }
-      if (!r.ok) { const t = await r.text(); alert('Error: ' + t); throw new Error(t); }
+      if (r.status === 401) { if (!silent) alert('Unauthorized. Check token.'); throw new Error('401'); }
+      if (!r.ok) { const t = await r.text(); if (!silent) alert('Error: ' + t); throw new Error(t); }
       return r.json();
     }
 
@@ -255,7 +262,7 @@
     async function loadEditor() {
       if (!token || !currentId) return;
       try {
-        const q = await api('/api/admin/quizzes/' + currentId);
+        const q = await api('/api/admin/quizzes/' + currentId, { silent: true });
         renderEditor(q);
       } catch (e) {}
     }
@@ -342,15 +349,29 @@
       loadEditor();
     }
 
-    async function changeSlug() {
+    function showSlugEditor() {
+      document.getElementById('slugPrefix').textContent = location.origin + '/q/';
+      const inp = document.getElementById('slugInput');
+      inp.value = currentId;
+      document.getElementById('slugEditor').classList.remove('hidden');
+      inp.focus(); inp.select();
+    }
+    function hideSlugEditor() {
+      document.getElementById('slugEditor').classList.add('hidden');
+    }
+    async function saveSlug() {
       const cur = currentId;
-      const slug = (prompt('New URL slug (letters, digits, _ and - only):', cur) || '').trim().toLowerCase();
-      if (!slug || slug === cur) return;
+      const slug = document.getElementById('slugInput').value.trim().toLowerCase();
+      if (!slug || slug === cur) { hideSlugEditor(); return; }
+      clearInterval(refreshTimer);
       try {
         const q = await api(`/api/admin/quizzes/${cur}/slug`, { method: 'POST', body: { slug } });
         currentId = q.id;
+        hideSlugEditor();
         location.hash = '#/quiz/' + q.id;
-      } catch (e) {}
+      } catch (e) {
+        route();
+      }
     }
     async function setDuration() {
       const durationSeconds = parseInt(document.getElementById('duration').value, 10);
