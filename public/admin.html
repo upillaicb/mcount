@@ -422,7 +422,7 @@
     function showDashboard() { location.hash = ''; }
     function route() {
       clearInterval(refreshTimer);
-      const m = location.hash.match(/^#\/quiz\/([a-z0-9]+)/i);
+      const m = location.hash.match(/^#\/quiz\/([a-z0-9_-]+)/i);
       if (m) {
         currentId = m[1];
         document.getElementById('dashboard').classList.add('hidden');
