@@ -85,7 +85,10 @@
     <div id="status" class="status"></div>
 
     <h3>Participant URL</h3>
-    <div class="url" id="purl"></div>
+    <div class="row">
+      <span class="url" id="purl"></span>
+      <button onclick="changeSlug()">Change URL</button>
+    </div>
 
     <h3>Settings</h3>
     <div class="row">
@@ -337,6 +340,17 @@
       if (!name) return;
       await api(`/api/admin/quizzes/${currentId}/rename`, { method: 'POST', body: { name } });
       loadEditor();
+    }
+
+    async function changeSlug() {
+      const cur = currentId;
+      const slug = (prompt('New URL slug (letters, digits, _ and - only):', cur) || '').trim().toLowerCase();
+      if (!slug || slug === cur) return;
+      try {
+        const q = await api(`/api/admin/quizzes/${cur}/slug`, { method: 'POST', body: { slug } });
+        currentId = q.id;
+        location.hash = '#/quiz/' + q.id;
+      } catch (e) {}
     }
     async function setDuration() {
       const durationSeconds = parseInt(document.getElementById('duration').value, 10);

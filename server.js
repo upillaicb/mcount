@@ -123,6 +123,23 @@ app.post('/api/admin/quizzes/:id/rename', requireAdmin, (req, res) => {
   withQuiz(req, res, q => { q.name = (req.body.name || '').trim() || q.name; });
 });
 
+app.post('/api/admin/quizzes/:id/slug', requireAdmin, (req, res) => {
+  const d = loadData();
+  const q = d.quizzes[req.params.id];
+  if (!q) return res.status(404).json({ error: 'quiz not found' });
+  const slug = String(req.body.slug || '').trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]{1,39}$/.test(slug)) {
+    return res.status(400).json({ error: 'slug must be 2-40 chars, letters/digits/_/-, starting with letter or digit' });
+  }
+  if (slug === q.id) return res.json(q);
+  if (d.quizzes[slug]) return res.status(409).json({ error: 'slug already in use' });
+  delete d.quizzes[q.id];
+  q.id = slug;
+  d.quizzes[slug] = q;
+  saveData(d);
+  res.json(q);
+});
+
 app.post('/api/admin/quizzes/:id/duration', requireAdmin, (req, res) => {
   withQuiz(req, res, q => {
     const n = parseInt(req.body.durationSeconds, 10);
