@@ -5,18 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MCount Admin</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #0f172a; }
+    body { font-family: system-ui, sans-serif; max-width: 980px; margin: 2rem auto; padding: 0 1rem; color: #0f172a; }
     h1, h2, h3 { margin-top: 0; }
     input, button, textarea, select { font: inherit; padding: .5rem; }
     button { cursor: pointer; margin-right: .3rem; }
     .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin: .5rem 0; }
     .status { padding: .75rem; background: #f1f5f9; border-radius: 6px; margin: 1rem 0; }
     table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-    th, td { text-align: left; padding: .6rem .5rem; border-bottom: 1px solid #e2e8f0; }
-    th { background: #f8fafc; }
+    th, td { text-align: left; padding: .6rem .5rem; border-bottom: 1px solid #e2e8f0; vertical-align: middle; }
+    th { background: #f8fafc; font-size: .9rem; color: #475569; }
     .badge { display: inline-block; padding: .15rem .55rem; border-radius: 999px; font-size: .8rem; font-weight: 600; }
     .badge.pub { background: #dcfce7; color: #166534; }
     .badge.draft { background: #fef3c7; color: #92400e; }
+    .badge.done { background: #dbeafe; color: #1e40af; }
     .url { font-family: monospace; font-size: .85rem; word-break: break-all; color: #475569; }
     .hidden { display: none; }
     ul { padding-left: 1.2rem; }
@@ -55,7 +56,7 @@
 </head>
 <body>
   <div class="toolbar">
-    <h1>MCount Admin</h1>
+    <h1><a class="link" onclick="location.hash=''">MCount Admin</a></h1>
     <div><label>Token: <input id="token" type="password" style="width:140px" /></label>
       <button onclick="saveToken()">Set</button></div>
   </div>
@@ -68,21 +69,19 @@
       <button onclick="createQuiz()">➕ Create quiz</button>
     </div>
     <table>
-      <thead><tr><th>Name</th><th>Questions</th><th>Status</th><th>URL</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Name</th><th>Questions</th><th>Runs</th><th>Active URL</th><th>Actions</th></tr></thead>
       <tbody id="qtable"><tr><td colspan="5">Enter token to load quizzes.</td></tr></tbody>
     </table>
   </section>
 
-  <!-- Editor -->
-  <section id="editor" class="hidden">
-    <div class="row"><a class="link" onclick="showDashboard()">← Back to dashboard</a></div>
+  <!-- Quiz editor -->
+  <section id="quiz" class="hidden">
+    <div class="row"><a class="link" onclick="location.hash=''">← Dashboard</a></div>
 
     <div class="row">
       <input id="quizName" style="flex:1;min-width:200px;font-size:1.3rem;font-weight:bold" />
       <button onclick="renameQuiz()">Rename</button>
     </div>
-
-    <div id="status" class="status"></div>
 
     <h3>Participant URL</h3>
     <div class="row">
@@ -112,23 +111,40 @@
       <input id="qans" placeholder="Answer" style="flex:1;min-width:200px" />
       <button onclick="addQuestion()">Add</button>
     </div>
-
     <details>
       <summary>Upload questions from file</summary>
-      <p>Supported formats:</p>
-      <ul>
-        <li>JSON: <code>[{"text":"Q1","answer":"A1"}, ...]</code></li>
-        <li>Pipe-separated per line: <code>question | answer</code></li>
-        <li>Paired lines: <code>Q: ...</code> then <code>A: ...</code></li>
-      </ul>
+      <p>Supported: JSON <code>[{"text":"Q","answer":"A"}]</code>, per-line <code>question | answer</code>, or paired <code>Q:</code>/<code>A:</code> lines.</p>
       <div class="row">
         <input type="file" id="file" accept=".json,.txt,.csv" />
         <button onclick="uploadFile()">Upload (replaces list)</button>
         <button class="danger" onclick="clearAll()">Clear all</button>
       </div>
     </details>
-
     <ul id="qlist"></ul>
+
+    <h3>Runs</h3>
+    <div class="row">
+      <input id="runName" placeholder="Run name (optional)" style="flex:1;min-width:180px" />
+      <label><input type="checkbox" id="runRand" /> Randomize questions</label>
+      <button onclick="createRun()">➕ Create run</button>
+    </div>
+    <table>
+      <thead><tr><th>Run</th><th>Status</th><th>Participants</th><th>Top Score</th><th>Randomized</th><th>Actions</th></tr></thead>
+      <tbody id="runtable"></tbody>
+    </table>
+  </section>
+
+  <!-- Run editor -->
+  <section id="run" class="hidden">
+    <div class="row"><a class="link" id="runBackLink">← Back to quiz</a></div>
+
+    <div class="row">
+      <input id="runNameEdit" style="flex:1;min-width:200px;font-size:1.2rem;font-weight:bold" />
+      <button onclick="renameRun()">Rename</button>
+      <span id="runStatusBadge"></span>
+    </div>
+
+    <div id="runStatus" class="status"></div>
 
     <h3>Participants &amp; Scores</h3>
     <div class="row">
@@ -138,16 +154,26 @@
     </div>
     <div id="plist" class="plist"></div>
 
+    <h3>Question Order</h3>
+    <div class="row">
+      <button onclick="reshuffleRun()">🔀 Reshuffle</button>
+      <button onclick="resetOrderRun()">↺ Reset to original order</button>
+    </div>
+    <ol id="runQlist"></ol>
+
     <h3>Control</h3>
     <div class="row">
-      <button onclick="ctrl('publish')">Publish</button>
-      <button onclick="ctrl('unpublish')">Unpublish</button>
+      <button onclick="publishRun()">Publish (active for URL)</button>
+      <button onclick="unpublishRun()">Unpublish</button>
+      <button onclick="completeRun()">Mark complete</button>
+      <button class="danger" onclick="deleteRun()">Delete run</button>
     </div>
   </section>
 
   <script>
     let token = localStorage.getItem('mcount_token') || '';
-    let currentId = null;
+    let currentQuizId = null;
+    let currentRunId = null;
     let refreshTimer = null;
     document.getElementById('token').value = token;
 
@@ -158,12 +184,12 @@
     }
 
     async function api(path, opts = {}) {
+      const silent = opts.silent;
       opts.headers = Object.assign({ 'X-Admin-Token': token }, opts.headers || {});
       if (opts.body && typeof opts.body === 'object' && !(opts.body instanceof Blob) && typeof opts.body !== 'string') {
         opts.headers['Content-Type'] = 'application/json';
         opts.body = JSON.stringify(opts.body);
       }
-      const silent = opts.silent;
       const r = await fetch(path, opts);
       if (r.status === 401) { if (!silent) alert('Unauthorized. Check token.'); throw new Error('401'); }
       if (!r.ok) { const t = await r.text(); if (!silent) alert('Error: ' + t); throw new Error(t); }
@@ -178,25 +204,17 @@
       let ok = false;
       try {
         if (navigator.clipboard && window.isSecureContext) {
-          await navigator.clipboard.writeText(text);
-          ok = true;
+          await navigator.clipboard.writeText(text); ok = true;
         }
-      } catch (e) { /* fall through */ }
+      } catch (e) {}
       if (!ok) {
         const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.focus(); ta.select();
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.focus(); ta.select();
         try { ok = document.execCommand('copy'); } catch (e) {}
         document.body.removeChild(ta);
       }
-      if (btn) {
-        const original = btn.textContent;
-        btn.textContent = ok ? 'Copied ✓' : 'Copy failed';
-        setTimeout(() => { btn.textContent = original; }, 1200);
-      }
+      if (btn) { const o = btn.textContent; btn.textContent = ok ? 'Copied ✓' : 'Copy failed'; setTimeout(() => btn.textContent = o, 1200); }
       if (!ok) prompt('Copy this URL:', text);
     }
 
@@ -204,25 +222,21 @@
     async function loadDashboard() {
       if (!token) return;
       try {
-        const list = await api('/api/admin/quizzes');
+        const list = await api('/api/admin/quizzes', { silent: true });
         const tbody = document.getElementById('qtable');
-        if (!list.length) {
-          tbody.innerHTML = '<tr><td colspan="5">No quizzes yet. Create one above.</td></tr>';
-          return;
-        }
+        if (!list.length) { tbody.innerHTML = '<tr><td colspan="5">No quizzes yet.</td></tr>'; return; }
         tbody.innerHTML = '';
         for (const q of list) {
           const tr = document.createElement('tr');
-          const url = location.origin + '/q/' + q.id;
+          const url = q.activeRunId ? location.origin + '/q/' + q.id : '(no active run)';
           tr.innerHTML = `
             <td><a class="link" data-id="${q.id}">${escapeHtml(q.name)}</a></td>
             <td>${q.questionCount}</td>
-            <td><span class="badge ${q.published ? 'pub' : 'draft'}">${q.published ? 'Published' : 'Draft'}</span></td>
-            <td><a class="url" href="${url}" target="_blank">${url}</a></td>
+            <td>${q.runCount}</td>
+            <td>${q.activeRunId ? `<a class="url" href="${url}" target="_blank">${url}</a>` : `<span style="color:#94a3b8">no active run</span>`}</td>
             <td>
               <button data-act="edit" data-id="${q.id}">Edit</button>
-              <button data-act="toggle" data-id="${q.id}">${q.published ? 'Unpublish' : 'Publish'}</button>
-              <button data-act="copy" data-id="${q.id}">Copy URL</button>
+              ${q.activeRunId ? `<button data-act="copy" data-id="${q.id}">Copy URL</button>` : ''}
               <button class="danger" data-act="delete" data-id="${q.id}">Delete</button>
             </td>`;
           tbody.appendChild(tr);
@@ -232,18 +246,11 @@
             ev.preventDefault();
             const id = el.dataset.id;
             const act = el.dataset.act || 'edit';
-            if (act === 'edit') { location.hash = '#/quiz/' + id; }
-            else if (act === 'toggle') {
-              const q = list.find(x => x.id === id);
-              await api(`/api/admin/quizzes/${id}/${q.published ? 'unpublish' : 'publish'}`, { method: 'POST' });
+            if (act === 'edit') location.hash = '#/quiz/' + id;
+            else if (act === 'copy') copyToClipboard(location.origin + '/q/' + id, el);
+            else if (act === 'delete' && confirm('Delete this quiz and all its runs?')) {
+              await api('/api/admin/quizzes/' + id, { method: 'DELETE' });
               loadDashboard();
-            } else if (act === 'copy') {
-              copyToClipboard(location.origin + '/q/' + id, el);
-            } else if (act === 'delete') {
-              if (confirm('Delete this quiz?')) {
-                await api('/api/admin/quizzes/' + id, { method: 'DELETE' });
-                loadDashboard();
-              }
             }
           });
         });
@@ -258,16 +265,16 @@
       location.hash = '#/quiz/' + q.id;
     }
 
-    // ---------- Editor ----------
-    async function loadEditor() {
-      if (!token || !currentId) return;
+    // ---------- Quiz editor ----------
+    async function loadQuiz() {
+      if (!token || !currentQuizId) return;
       try {
-        const q = await api('/api/admin/quizzes/' + currentId, { silent: true });
-        renderEditor(q);
+        const q = await api('/api/admin/quizzes/' + currentQuizId, { silent: true });
+        renderQuiz(q);
       } catch (e) {}
     }
 
-    function renderEditor(q) {
+    function renderQuiz(q) {
       const active = document.activeElement;
       const nameEl = document.getElementById('quizName');
       const durEl = document.getElementById('duration');
@@ -275,165 +282,247 @@
       if (active !== nameEl) nameEl.value = q.name;
       if (active !== durEl) durEl.value = q.durationSeconds;
       if (active !== ansEl) ansEl.value = q.answerSeconds;
-      document.getElementById('purl').textContent = location.origin + '/q/' + q.id;
-      const s = document.getElementById('status');
-      if (q.published) { s.style.background = '#dcfce7'; s.textContent = `PUBLISHED — ${q.questions.length} question(s).`; }
-      else { s.style.background = '#fef3c7'; s.textContent = `Draft — ${q.questions.length} question(s).`; }
+      document.getElementById('purl').textContent = q.activeRunId
+        ? (location.origin + '/q/' + q.id) : `${location.origin}/q/${q.id}  (no active run)`;
+
       const ul = document.getElementById('qlist');
       ul.innerHTML = '';
       q.questions.forEach((qq, i) => {
         const li = document.createElement('li');
         li.innerHTML = `<b>${escapeHtml(qq.text)}</b><span class="a">→ ${escapeHtml(qq.answer || '(no answer)')}</span> `;
-        const btn = document.createElement('button');
-        btn.textContent = '✕';
-        btn.onclick = () => del(i);
-        li.appendChild(btn);
-        ul.appendChild(li);
+        const btn = document.createElement('button'); btn.textContent = '✕'; btn.onclick = () => delQ(i);
+        li.appendChild(btn); ul.appendChild(li);
       });
 
-      const plist = document.getElementById('plist');
-      const participants = q.participants || [];
-      plist.innerHTML = '';
-      if (!participants.length) {
-        plist.innerHTML = '<div style="color:#64748b">No participants yet.</div>';
-      } else {
-        for (const p of participants) {
-          const card = document.createElement('div');
-          card.className = 'pcard';
-          card.innerHTML = `
-            <div class="info">
-              <span class="pname">${escapeHtml(p.name)}</span>
-              <span class="pscore">${p.score}</span>
-            </div>
-            <div class="actions">
-              <button class="minus" data-pid="${p.id}" data-delta="-1" aria-label="Decrease">−</button>
-              <button class="plus" data-pid="${p.id}" data-delta="1" aria-label="Increase">+</button>
-              <button class="rm" data-pid="${p.id}" data-del="1" aria-label="Remove">✕</button>
-            </div>`;
-          plist.appendChild(card);
-        }
-        plist.querySelectorAll('button').forEach(b => {
-          b.addEventListener('click', async () => {
-            const pid = b.dataset.pid;
-            if (b.dataset.del) {
-              if (!confirm('Remove participant?')) return;
-              await api(`/api/admin/quizzes/${currentId}/participants/${pid}`, { method: 'DELETE' });
-            } else {
-              await api(`/api/admin/quizzes/${currentId}/participants/${pid}/score`,
-                { method: 'POST', body: { delta: parseInt(b.dataset.delta, 10) } });
-            }
-            loadEditor();
-          });
-        });
+      const rt = document.getElementById('runtable');
+      rt.innerHTML = '';
+      if (!q.runs.length) rt.innerHTML = '<tr><td colspan="6" style="color:#64748b">No runs yet. Create one above.</td></tr>';
+      for (const r of q.runs) {
+        const tr = document.createElement('tr');
+        const badge = r.status === 'published' ? '<span class="badge pub">Published</span>'
+                    : r.status === 'completed' ? '<span class="badge done">Completed</span>'
+                    : '<span class="badge draft">Draft</span>';
+        tr.innerHTML = `
+          <td><a class="link" data-rid="${r.id}">${escapeHtml(r.name)}</a><br><small style="color:#94a3b8">${new Date(r.createdAt).toLocaleString()}</small></td>
+          <td>${badge}</td>
+          <td>${r.participantCount}</td>
+          <td>${r.topScore ?? '-'}</td>
+          <td>${r.randomized ? 'Yes' : 'No'}</td>
+          <td>
+            <button data-act="edit" data-rid="${r.id}">Edit</button>
+            <button data-act="${r.status === 'published' ? 'unpublish' : 'publish'}" data-rid="${r.id}">${r.status === 'published' ? 'Unpublish' : 'Publish'}</button>
+            <button class="danger" data-act="delete" data-rid="${r.id}">Delete</button>
+          </td>`;
+        rt.appendChild(tr);
       }
-    }
-
-    async function addParticipant() {
-      const name = document.getElementById('pname').value.trim();
-      if (!name) return;
-      await api(`/api/admin/quizzes/${currentId}/participants`, { method: 'POST', body: { name } });
-      document.getElementById('pname').value = '';
-      loadEditor();
-    }
-
-    async function resetScores() {
-      if (!confirm('Reset all participant scores to 0?')) return;
-      await api(`/api/admin/quizzes/${currentId}/participants/reset`, { method: 'POST' });
-      loadEditor();
+      rt.querySelectorAll('[data-rid]').forEach(el => {
+        el.addEventListener('click', async (ev) => {
+          ev.preventDefault();
+          const rid = el.dataset.rid;
+          const act = el.dataset.act || 'edit';
+          if (act === 'edit') location.hash = `#/quiz/${currentQuizId}/run/${rid}`;
+          else if (act === 'publish' || act === 'unpublish') { await api(`/api/admin/runs/${rid}/${act}`, { method: 'POST' }); loadQuiz(); }
+          else if (act === 'delete' && confirm('Delete this run and its participants?')) {
+            await api(`/api/admin/runs/${rid}`, { method: 'DELETE' }); loadQuiz();
+          }
+        });
+      });
     }
 
     async function renameQuiz() {
       const name = document.getElementById('quizName').value.trim();
       if (!name) return;
-      await api(`/api/admin/quizzes/${currentId}/rename`, { method: 'POST', body: { name } });
-      loadEditor();
-    }
-
-    function showSlugEditor() {
-      document.getElementById('slugPrefix').textContent = location.origin + '/q/';
-      const inp = document.getElementById('slugInput');
-      inp.value = currentId;
-      document.getElementById('slugEditor').classList.remove('hidden');
-      inp.focus(); inp.select();
-    }
-    function hideSlugEditor() {
-      document.getElementById('slugEditor').classList.add('hidden');
-    }
-    async function saveSlug() {
-      const cur = currentId;
-      const slug = document.getElementById('slugInput').value.trim().toLowerCase();
-      if (!slug || slug === cur) { hideSlugEditor(); return; }
-      clearInterval(refreshTimer);
-      try {
-        const q = await api(`/api/admin/quizzes/${cur}/slug`, { method: 'POST', body: { slug } });
-        currentId = q.id;
-        hideSlugEditor();
-        location.hash = '#/quiz/' + q.id;
-      } catch (e) {
-        route();
-      }
+      await api(`/api/admin/quizzes/${currentQuizId}/rename`, { method: 'POST', body: { name } });
+      loadQuiz();
     }
     async function setDuration() {
       const durationSeconds = parseInt(document.getElementById('duration').value, 10);
-      await api(`/api/admin/quizzes/${currentId}/duration`, { method: 'POST', body: { durationSeconds } });
-      loadEditor();
+      await api(`/api/admin/quizzes/${currentQuizId}/duration`, { method: 'POST', body: { durationSeconds } });
+      loadQuiz();
     }
     async function setAnswerDuration() {
       const answerSeconds = parseInt(document.getElementById('ansDuration').value, 10);
-      await api(`/api/admin/quizzes/${currentId}/answer-duration`, { method: 'POST', body: { answerSeconds } });
-      loadEditor();
+      await api(`/api/admin/quizzes/${currentQuizId}/answer-duration`, { method: 'POST', body: { answerSeconds } });
+      loadQuiz();
     }
     async function addQuestion() {
       const text = document.getElementById('qtext').value.trim();
       const answer = document.getElementById('qans').value.trim();
       if (!text) return;
-      await api(`/api/admin/quizzes/${currentId}/questions`, { method: 'POST', body: { text, answer } });
-      document.getElementById('qtext').value = '';
-      document.getElementById('qans').value = '';
-      loadEditor();
+      await api(`/api/admin/quizzes/${currentQuizId}/questions`, { method: 'POST', body: { text, answer } });
+      document.getElementById('qtext').value = ''; document.getElementById('qans').value = '';
+      loadQuiz();
     }
-    async function del(i) {
-      await api(`/api/admin/quizzes/${currentId}/questions/${i}`, { method: 'DELETE' });
-      loadEditor();
-    }
-    async function ctrl(action) {
-      await api(`/api/admin/quizzes/${currentId}/${action}`, { method: 'POST' });
-      loadEditor();
+    async function delQ(i) {
+      await api(`/api/admin/quizzes/${currentQuizId}/questions/${i}`, { method: 'DELETE' });
+      loadQuiz();
     }
     async function clearAll() {
       if (!confirm('Delete all questions in this quiz?')) return;
-      await api(`/api/admin/quizzes/${currentId}/clear`, { method: 'POST' });
-      loadEditor();
+      await api(`/api/admin/quizzes/${currentQuizId}/clear`, { method: 'POST' });
+      loadQuiz();
     }
     async function uploadFile() {
       const f = document.getElementById('file').files[0];
       if (!f) { alert('Choose a file first.'); return; }
       const text = await f.text();
-      await api(`/api/admin/quizzes/${currentId}/upload`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body: text
+      await api(`/api/admin/quizzes/${currentQuizId}/upload`, {
+        method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: text
       });
       document.getElementById('file').value = '';
-      loadEditor();
+      loadQuiz();
+    }
+    function showSlugEditor() {
+      document.getElementById('slugPrefix').textContent = location.origin + '/q/';
+      const inp = document.getElementById('slugInput'); inp.value = currentQuizId;
+      document.getElementById('slugEditor').classList.remove('hidden');
+      inp.focus(); inp.select();
+    }
+    function hideSlugEditor() { document.getElementById('slugEditor').classList.add('hidden'); }
+    async function saveSlug() {
+      const cur = currentQuizId;
+      const slug = document.getElementById('slugInput').value.trim().toLowerCase();
+      if (!slug || slug === cur) { hideSlugEditor(); return; }
+      clearInterval(refreshTimer);
+      try {
+        const q = await api(`/api/admin/quizzes/${cur}/slug`, { method: 'POST', body: { slug } });
+        currentQuizId = q.id; hideSlugEditor();
+        location.hash = '#/quiz/' + q.id;
+      } catch (e) { route(); }
+    }
+    async function createRun() {
+      const name = document.getElementById('runName').value.trim();
+      const randomized = document.getElementById('runRand').checked;
+      const r = await api(`/api/admin/quizzes/${currentQuizId}/runs`, { method: 'POST', body: { name, randomized } });
+      document.getElementById('runName').value = ''; document.getElementById('runRand').checked = false;
+      location.hash = `#/quiz/${currentQuizId}/run/${r.id}`;
+    }
+
+    // ---------- Run editor ----------
+    async function loadRun() {
+      if (!token || !currentRunId) return;
+      try {
+        const r = await api('/api/admin/runs/' + currentRunId, { silent: true });
+        renderRun(r);
+      } catch (e) {}
+    }
+
+    function renderRun(r) {
+      document.getElementById('runBackLink').onclick = () => { location.hash = '#/quiz/' + r.quizId; };
+      const nameEl = document.getElementById('runNameEdit');
+      if (document.activeElement !== nameEl) nameEl.value = r.name;
+
+      const badgeEl = document.getElementById('runStatusBadge');
+      badgeEl.innerHTML = r.status === 'published' ? '<span class="badge pub">Published</span>'
+                        : r.status === 'completed' ? '<span class="badge done">Completed</span>'
+                        : '<span class="badge draft">Draft</span>';
+      const s = document.getElementById('runStatus');
+      s.textContent = `Quiz: ${r.quiz.name} · ${r.questions.length} question(s) · Created ${new Date(r.createdAt).toLocaleString()}` +
+                      (r.publishedAt ? ` · Published ${new Date(r.publishedAt).toLocaleString()}` : '') +
+                      (r.completedAt ? ` · Completed ${new Date(r.completedAt).toLocaleString()}` : '');
+
+      const plist = document.getElementById('plist');
+      const ps = r.participants || [];
+      plist.innerHTML = '';
+      if (!ps.length) plist.innerHTML = '<div style="color:#64748b">No participants yet.</div>';
+      else for (const p of ps) {
+        const card = document.createElement('div');
+        card.className = 'pcard';
+        card.innerHTML = `
+          <div class="info"><span class="pname">${escapeHtml(p.name)}</span><span class="pscore">${p.score}</span></div>
+          <div class="actions">
+            <button class="minus" data-pid="${p.id}" data-delta="-1">−</button>
+            <button class="plus" data-pid="${p.id}" data-delta="1">+</button>
+            <button class="rm" data-pid="${p.id}" data-del="1">✕</button>
+          </div>`;
+        plist.appendChild(card);
+      }
+      plist.querySelectorAll('button').forEach(b => {
+        b.addEventListener('click', async () => {
+          const pid = b.dataset.pid;
+          if (b.dataset.del) { if (!confirm('Remove participant?')) return;
+            await api(`/api/admin/runs/${currentRunId}/participants/${pid}`, { method: 'DELETE' });
+          } else {
+            await api(`/api/admin/runs/${currentRunId}/participants/${pid}/score`, { method: 'POST', body: { delta: parseInt(b.dataset.delta, 10) } });
+          }
+          loadRun();
+        });
+      });
+
+      const ql = document.getElementById('runQlist');
+      ql.innerHTML = '';
+      r.questions.forEach(qq => {
+        const li = document.createElement('li');
+        li.innerHTML = `<b>${escapeHtml(qq.text)}</b><span class="a">→ ${escapeHtml(qq.answer || '(no answer)')}</span>`;
+        ql.appendChild(li);
+      });
+    }
+
+    async function renameRun() {
+      const name = document.getElementById('runNameEdit').value.trim();
+      if (!name) return;
+      await api(`/api/admin/runs/${currentRunId}/rename`, { method: 'POST', body: { name } });
+      loadRun();
+    }
+    async function addParticipant() {
+      const name = document.getElementById('pname').value.trim();
+      if (!name) return;
+      await api(`/api/admin/runs/${currentRunId}/participants`, { method: 'POST', body: { name } });
+      document.getElementById('pname').value = '';
+      loadRun();
+    }
+    async function resetScores() {
+      if (!confirm('Reset all participant scores to 0?')) return;
+      await api(`/api/admin/runs/${currentRunId}/participants/reset`, { method: 'POST' });
+      loadRun();
+    }
+    async function reshuffleRun() {
+      await api(`/api/admin/runs/${currentRunId}/reshuffle`, { method: 'POST' });
+      loadRun();
+    }
+    async function resetOrderRun() {
+      await api(`/api/admin/runs/${currentRunId}/reset-order`, { method: 'POST' });
+      loadRun();
+    }
+    async function publishRun() {
+      await api(`/api/admin/runs/${currentRunId}/publish`, { method: 'POST' });
+      loadRun();
+    }
+    async function unpublishRun() {
+      await api(`/api/admin/runs/${currentRunId}/unpublish`, { method: 'POST' });
+      loadRun();
+    }
+    async function completeRun() {
+      if (!confirm('Mark run as complete?')) return;
+      await api(`/api/admin/runs/${currentRunId}/complete`, { method: 'POST' });
+      loadRun();
+    }
+    async function deleteRun() {
+      if (!confirm('Delete this run and all its participants?')) return;
+      const r = await api('/api/admin/runs/' + currentRunId, { silent: true }).catch(() => null);
+      await api('/api/admin/runs/' + currentRunId, { method: 'DELETE' });
+      location.hash = '#/quiz/' + (r ? r.quizId : '');
     }
 
     // ---------- Routing ----------
-    function showDashboard() { location.hash = ''; }
+    function show(id) {
+      ['dashboard', 'quiz', 'run'].forEach(x => document.getElementById(x).classList.toggle('hidden', x !== id));
+    }
     function route() {
       clearInterval(refreshTimer);
-      const m = location.hash.match(/^#\/quiz\/([a-z0-9_-]+)/i);
-      if (m) {
-        currentId = m[1];
-        document.getElementById('dashboard').classList.add('hidden');
-        document.getElementById('editor').classList.remove('hidden');
-        loadEditor();
-        refreshTimer = setInterval(loadEditor, 4000);
+      const runM = location.hash.match(/^#\/quiz\/([a-z0-9_-]+)\/run\/([a-f0-9]+)/i);
+      const quizM = location.hash.match(/^#\/quiz\/([a-z0-9_-]+)$/i);
+      if (runM) {
+        currentQuizId = runM[1]; currentRunId = runM[2];
+        show('run'); loadRun();
+        refreshTimer = setInterval(loadRun, 4000);
+      } else if (quizM) {
+        currentQuizId = quizM[1]; currentRunId = null;
+        show('quiz'); loadQuiz();
+        refreshTimer = setInterval(loadQuiz, 4000);
       } else {
-        currentId = null;
-        document.getElementById('dashboard').classList.remove('hidden');
-        document.getElementById('editor').classList.add('hidden');
-        loadDashboard();
+        currentQuizId = null; currentRunId = null;
+        show('dashboard'); loadDashboard();
         refreshTimer = setInterval(loadDashboard, 4000);
       }
     }

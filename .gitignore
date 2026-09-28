@@ -1,5 +1,9 @@
 node_modules/
 data.json
+mcount.db
+mcount.db-journal
+mcount.db-wal
+mcount.db-shm
 .DS_Store
 *.log
 .env

@@ -1,38 +1,18 @@
 const express = require('express');
-const crypto = require('crypto');
-const fs = require('fs');
 const path = require('path');
+const db = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 5555;
-const DATA_FILE = path.join(__dirname, 'data.json');
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'admin123';
-const ANSWER_SECONDS = 5;
 
 app.use(express.json({ limit: '2mb' }));
 app.use('/api/admin/quizzes/:id/upload', express.text({ type: '*/*', limit: '2mb' }));
-
-function loadData() {
-  try { return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); }
-  catch (e) { return { quizzes: {} }; }
-}
-function saveData(d) { fs.writeFileSync(DATA_FILE, JSON.stringify(d, null, 2)); }
-function newId() { return crypto.randomBytes(4).toString('hex'); }
 
 function requireAdmin(req, res, next) {
   const token = req.headers['x-admin-token'] || req.query.token;
   if (token !== ADMIN_TOKEN) return res.status(401).json({ error: 'unauthorized' });
   next();
-}
-
-function withQuiz(req, res, mutate) {
-  const d = loadData();
-  const q = d.quizzes[req.params.id];
-  if (!q) return res.status(404).json({ error: 'quiz not found' });
-  const result = mutate(q, d);
-  if (result === false) return;
-  saveData(d);
-  res.json(q);
 }
 
 function parseUpload(body) {
@@ -66,163 +46,182 @@ function parseUpload(body) {
 }
 
 // ---------- Public (participant) ----------
-app.get('/api/current/:id', (req, res) => {
-  const d = loadData();
-  const q = d.quizzes[req.params.id];
-  if (!q) return res.status(404).json({ error: 'not found' });
-  const participants = (q.participants || []).slice().sort((a, b) => b.score - a.score);
+// Serves the currently active (published) run for the quiz slug.
+app.get('/api/current/:slug', (req, res) => {
+  const quiz = db.getQuiz(req.params.slug);
+  if (!quiz) return res.status(404).json({ error: 'quiz not found' });
+  const run = db.getActiveRunForQuiz(quiz.id);
+  const participants = run ? db.listParticipants(run.id) : [];
+  const questions = run ? db.getRunQuestions(run) : [];
   res.json({
-    id: q.id,
-    name: q.name,
-    published: q.published,
-    durationSeconds: q.durationSeconds,
-    answerSeconds: q.answerSeconds || ANSWER_SECONDS,
-    questions: q.published ? q.questions : [],
+    id: quiz.id,
+    name: quiz.name,
+    published: !!run && run.status === 'published',
+    durationSeconds: quiz.durationSeconds,
+    answerSeconds: quiz.answerSeconds,
+    runId: run ? run.id : null,
+    runName: run ? run.name : null,
+    questions: (run && run.status === 'published') ? questions : [],
     participants
   });
 });
 
-// ---------- Admin ----------
-app.get('/api/admin/quizzes', requireAdmin, (req, res) => {
-  const d = loadData();
-  const list = Object.values(d.quizzes).map(q => ({
-    id: q.id, name: q.name, questionCount: q.questions.length,
-    published: q.published, durationSeconds: q.durationSeconds
-  }));
-  res.json(list);
-});
+// ---------- Admin: Quizzes ----------
+app.get('/api/admin/quizzes', requireAdmin, (req, res) => res.json(db.listQuizzes()));
 
 app.post('/api/admin/quizzes', requireAdmin, (req, res) => {
   const name = (req.body.name || '').trim() || 'Untitled quiz';
-  const d = loadData();
-  const id = newId();
-  d.quizzes[id] = {
-    id, name, durationSeconds: 30, answerSeconds: ANSWER_SECONDS,
-    published: false, questions: [], participants: []
-  };
-  saveData(d);
-  res.json(d.quizzes[id]);
+  res.json(db.createQuiz(name));
 });
 
 app.get('/api/admin/quizzes/:id', requireAdmin, (req, res) => {
-  const d = loadData();
-  const q = d.quizzes[req.params.id];
-  if (!q) return res.status(404).json({ error: 'not found' });
-  res.json(q);
+  const quiz = db.getQuiz(req.params.id);
+  if (!quiz) return res.status(404).json({ error: 'not found' });
+  quiz.questions = db.listQuestions(req.params.id);
+  quiz.runs = db.listRuns(req.params.id);
+  res.json(quiz);
 });
 
 app.delete('/api/admin/quizzes/:id', requireAdmin, (req, res) => {
-  const d = loadData();
-  if (!d.quizzes[req.params.id]) return res.status(404).json({ error: 'not found' });
-  delete d.quizzes[req.params.id];
-  saveData(d);
+  db.deleteQuiz(req.params.id);
   res.json({ ok: true });
 });
 
 app.post('/api/admin/quizzes/:id/rename', requireAdmin, (req, res) => {
-  withQuiz(req, res, q => { q.name = (req.body.name || '').trim() || q.name; });
+  const name = (req.body.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'name required' });
+  res.json(db.renameQuiz(req.params.id, name));
+});
+
+app.post('/api/admin/quizzes/:id/duration', requireAdmin, (req, res) => {
+  const n = parseInt(req.body.durationSeconds, 10);
+  if (!Number.isFinite(n) || n <= 0) return res.status(400).json({ error: 'invalid duration' });
+  res.json(db.setQuizDuration(req.params.id, n));
+});
+
+app.post('/api/admin/quizzes/:id/answer-duration', requireAdmin, (req, res) => {
+  const n = parseInt(req.body.answerSeconds, 10);
+  if (!Number.isFinite(n) || n <= 0) return res.status(400).json({ error: 'invalid duration' });
+  res.json(db.setQuizAnswerDuration(req.params.id, n));
 });
 
 app.post('/api/admin/quizzes/:id/slug', requireAdmin, (req, res) => {
-  const d = loadData();
-  const q = d.quizzes[req.params.id];
-  if (!q) return res.status(404).json({ error: 'quiz not found' });
   const slug = String(req.body.slug || '').trim().toLowerCase();
   if (!/^[a-z0-9][a-z0-9_-]{1,39}$/.test(slug)) {
     return res.status(400).json({ error: 'slug must be 2-40 chars, letters/digits/_/-, starting with letter or digit' });
   }
-  if (slug === q.id) return res.json(q);
-  if (d.quizzes[slug]) return res.status(409).json({ error: 'slug already in use' });
-  delete d.quizzes[q.id];
-  q.id = slug;
-  d.quizzes[slug] = q;
-  saveData(d);
-  res.json(q);
+  try { res.json(db.changeQuizSlug(req.params.id, slug)); }
+  catch (e) {
+    if (e.code === 'DUP') return res.status(409).json({ error: 'slug already in use' });
+    res.status(500).json({ error: e.message });
+  }
 });
 
-app.post('/api/admin/quizzes/:id/duration', requireAdmin, (req, res) => {
-  withQuiz(req, res, q => {
-    const n = parseInt(req.body.durationSeconds, 10);
-    q.durationSeconds = Number.isFinite(n) && n > 0 ? n : q.durationSeconds;
-  });
-});
-
-app.post('/api/admin/quizzes/:id/answer-duration', requireAdmin, (req, res) => {
-  withQuiz(req, res, q => {
-    const n = parseInt(req.body.answerSeconds, 10);
-    q.answerSeconds = Number.isFinite(n) && n > 0 ? n : (q.answerSeconds || ANSWER_SECONDS);
-  });
-});
-
+// ---------- Admin: Questions (template on quiz) ----------
 app.post('/api/admin/quizzes/:id/questions', requireAdmin, (req, res) => {
-  withQuiz(req, res, q => {
-    const { text, answer } = req.body;
-    if (!text || !text.trim()) { res.status(400).json({ error: 'text required' }); return false; }
-    q.questions.push({ text: text.trim(), answer: (answer || '').trim() });
-  });
+  const { text, answer } = req.body;
+  if (!text || !text.trim()) return res.status(400).json({ error: 'text required' });
+  res.json(db.addQuestion(req.params.id, text.trim(), (answer || '').trim()));
 });
 
 app.delete('/api/admin/quizzes/:id/questions/:i', requireAdmin, (req, res) => {
-  withQuiz(req, res, q => {
-    const i = parseInt(req.params.i, 10);
-    if (i >= 0 && i < q.questions.length) q.questions.splice(i, 1);
-  });
+  db.deleteQuestionByPosition(req.params.id, parseInt(req.params.i, 10));
+  res.json({ ok: true });
 });
 
 app.post('/api/admin/quizzes/:id/clear', requireAdmin, (req, res) => {
-  withQuiz(req, res, q => { q.questions = []; });
-});
-
-app.post('/api/admin/quizzes/:id/publish', requireAdmin, (req, res) => {
-  withQuiz(req, res, q => { q.published = true; });
-});
-
-app.post('/api/admin/quizzes/:id/unpublish', requireAdmin, (req, res) => {
-  withQuiz(req, res, q => { q.published = false; });
-});
-
-app.post('/api/admin/quizzes/:id/participants', requireAdmin, (req, res) => {
-  withQuiz(req, res, q => {
-    const name = (req.body.name || '').trim();
-    if (!name) { res.status(400).json({ error: 'name required' }); return false; }
-    q.participants = q.participants || [];
-    q.participants.push({ id: newId(), name, score: 0 });
-  });
-});
-
-app.delete('/api/admin/quizzes/:id/participants/:pid', requireAdmin, (req, res) => {
-  withQuiz(req, res, q => {
-    q.participants = (q.participants || []).filter(p => p.id !== req.params.pid);
-  });
-});
-
-app.post('/api/admin/quizzes/:id/participants/:pid/score', requireAdmin, (req, res) => {
-  withQuiz(req, res, q => {
-    const delta = parseInt(req.body.delta, 10);
-    if (!Number.isFinite(delta)) { res.status(400).json({ error: 'delta required' }); return false; }
-    const p = (q.participants || []).find(p => p.id === req.params.pid);
-    if (!p) { res.status(404).json({ error: 'participant not found' }); return false; }
-    p.score += delta;
-  });
-});
-
-app.post('/api/admin/quizzes/:id/participants/reset', requireAdmin, (req, res) => {
-  withQuiz(req, res, q => {
-    (q.participants || []).forEach(p => { p.score = 0; });
-  });
+  db.clearQuestions(req.params.id);
+  res.json({ ok: true });
 });
 
 app.post('/api/admin/quizzes/:id/upload', requireAdmin, (req, res) => {
   try {
     const items = parseUpload(req.body);
-    withQuiz(req, res, q => { q.questions = items; });
+    db.replaceQuestions(req.params.id, items);
+    res.json({ ok: true, count: items.length });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
 });
 
+// ---------- Admin: Runs ----------
+app.get('/api/admin/quizzes/:id/runs', requireAdmin, (req, res) => {
+  res.json(db.listRuns(req.params.id));
+});
+
+app.post('/api/admin/quizzes/:id/runs', requireAdmin, (req, res) => {
+  const { name, randomized } = req.body;
+  const run = db.createRun(req.params.id, (name || '').trim(), !!randomized);
+  if (!run) return res.status(404).json({ error: 'quiz not found' });
+  res.json(run);
+});
+
+app.get('/api/admin/runs/:rid', requireAdmin, (req, res) => {
+  const run = db.getRun(req.params.rid);
+  if (!run) return res.status(404).json({ error: 'not found' });
+  const quiz = db.getQuiz(run.quizId);
+  run.quiz = quiz;
+  run.participants = db.listParticipants(run.id);
+  run.questions = db.getRunQuestions(run);
+  res.json(run);
+});
+
+app.post('/api/admin/runs/:rid/rename', requireAdmin, (req, res) => {
+  const name = (req.body.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'name required' });
+  res.json(db.renameRun(req.params.rid, name));
+});
+
+app.post('/api/admin/runs/:rid/reshuffle', requireAdmin, (req, res) => {
+  const r = db.reshuffleRun(req.params.rid);
+  if (!r) return res.status(404).json({ error: 'not found' });
+  res.json(r);
+});
+
+app.post('/api/admin/runs/:rid/reset-order', requireAdmin, (req, res) => {
+  const r = db.resetRunOrder(req.params.rid);
+  if (!r) return res.status(404).json({ error: 'not found' });
+  res.json(r);
+});
+
+app.post('/api/admin/runs/:rid/publish', requireAdmin, (req, res) => res.json(db.publishRun(req.params.rid)));
+app.post('/api/admin/runs/:rid/unpublish', requireAdmin, (req, res) => res.json(db.unpublishRun(req.params.rid)));
+app.post('/api/admin/runs/:rid/complete', requireAdmin, (req, res) => res.json(db.completeRun(req.params.rid)));
+
+app.delete('/api/admin/runs/:rid', requireAdmin, (req, res) => {
+  db.deleteRun(req.params.rid);
+  res.json({ ok: true });
+});
+
+// ---------- Admin: Participants (per run) ----------
+app.get('/api/admin/runs/:rid/participants', requireAdmin, (req, res) => {
+  res.json(db.listParticipants(req.params.rid));
+});
+
+app.post('/api/admin/runs/:rid/participants', requireAdmin, (req, res) => {
+  const name = (req.body.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'name required' });
+  res.json(db.addParticipant(req.params.rid, name));
+});
+
+app.delete('/api/admin/runs/:rid/participants/:pid', requireAdmin, (req, res) => {
+  db.deleteParticipant(req.params.pid);
+  res.json({ ok: true });
+});
+
+app.post('/api/admin/runs/:rid/participants/:pid/score', requireAdmin, (req, res) => {
+  const delta = parseInt(req.body.delta, 10);
+  if (!Number.isFinite(delta)) return res.status(400).json({ error: 'delta required' });
+  res.json(db.scoreParticipant(req.params.pid, delta));
+});
+
+app.post('/api/admin/runs/:rid/participants/reset', requireAdmin, (req, res) => {
+  db.resetRunScores(req.params.rid);
+  res.json({ ok: true });
+});
+
 // ---------- Static + routing ----------
-app.get('/q/:id', (req, res) => res.sendFile(path.join(__dirname, 'public', 'quiz.html')));
+app.get('/q/:slug', (req, res) => res.sendFile(path.join(__dirname, 'public', 'quiz.html')));
 app.get('/', (req, res) => res.redirect('/admin.html'));
 app.use(express.static(path.join(__dirname, 'public')));
 
