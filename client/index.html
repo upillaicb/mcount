@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#146b52">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="MCount">
+  <title>MCount</title>
+  <link rel="manifest" href="/app/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/app/icons/apple-touch-icon.png">
+  <link rel="icon" href="/app/icons/icon-192.png">
+  <link rel="stylesheet" href="/app/styles.css">
+  <script defer src="/app/vendor/lucide.js"></script>
+  <script defer src="/app/app.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <a class="brand" href="/app/" aria-label="MCount home"><img src="/app/icons/icon-192.png" width="40" height="40" alt="">MCount</a>
+    <span id="connection" role="status">Connecting</span>
+    <button id="refresh" class="icon-button" aria-label="Refresh" title="Refresh"><i data-lucide="refresh-cw"></i></button>
+  </header>
+  <main id="main" tabindex="-1">
+    <section id="catalog-view">
+      <div class="section-heading"><div><p class="eyebrow">Live library</p><h1>Ready to play</h1></div><span id="catalog-count"></span></div>
+      <p id="catalog-message" role="status">Loading active quizzes...</p>
+      <div id="catalog" class="catalog"></div>
+    </section>
+    <section id="player-view" hidden>
+      <canvas id="confetti" aria-hidden="true"></canvas>
+      <div id="quiz-meta"></div>
+      <div id="paused-badge" hidden>PAUSED</div>
+      <div class="player-heading">
+        <button id="back" class="icon-button" aria-label="Back to library" title="Back to library"><i data-lucide="arrow-left"></i></button>
+        <div><p id="mode-label" class="eyebrow"></p><h1 id="quiz-title"></h1><p id="run-name"></p></div>
+        <span id="progress"></span>
+      </div>
+      <p id="player-message" role="status"></p>
+      <div class="play-layout">
+        <div class="play-surface">
+          <div class="stage-meta"><span id="phase" class="eyebrow"></span><span id="timer" role="timer"></span></div>
+          <h2 id="question"></h2>
+          <p id="answer" hidden></p>
+          <div class="player-controls">
+            <button id="previous" class="icon-button" aria-label="Previous card" title="Previous card"><i data-lucide="chevron-left"></i></button>
+            <button id="start" class="primary">Start quiz</button>
+            <button id="pause" class="icon-button" aria-label="Pause" title="Pause"><i data-lucide="pause"></i></button>
+            <button id="reveal" class="primary">Reveal answer</button>
+            <button id="next" class="icon-button" aria-label="Next card" title="Next card"><i data-lucide="chevron-right"></i></button>
+          </div>
+        </div>
+        <aside id="scores" hidden><h2>Scores</h2><ol id="score-list"></ol></aside>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

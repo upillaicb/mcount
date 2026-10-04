@@ -46,6 +46,22 @@ function parseUpload(body) {
 }
 
 // ---------- Public (participant) ----------
+app.get('/api/catalog', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(db.listQuizzes().filter(quiz => quiz.activeRunId).map(quiz => {
+    const run = db.getActiveRunForQuiz(quiz.id);
+    return {
+      id: quiz.id,
+      name: quiz.name,
+      runId: run.id,
+      runName: run.name,
+      questionCount: db.getRunQuestions(run).length,
+      durationSeconds: quiz.durationSeconds,
+      answerSeconds: quiz.answerSeconds
+    };
+  }));
+});
+
 // Serves the currently active (published) run for the quiz slug.
 app.get('/api/current/:slug', (req, res) => {
   const quiz = db.getQuiz(req.params.slug);
@@ -221,6 +237,8 @@ app.post('/api/admin/runs/:rid/participants/reset', requireAdmin, (req, res) => 
 });
 
 // ---------- Static + routing ----------
+app.get('/app/vendor/lucide.js', (req, res) => res.sendFile(require.resolve('lucide/dist/umd/lucide.js')));
+app.use('/app', express.static(path.join(__dirname, 'client')));
 app.get('/q/:slug', (req, res) => res.sendFile(path.join(__dirname, 'public', 'quiz.html')));
 app.get('/', (req, res) => res.redirect('/admin.html'));
 app.use(express.static(path.join(__dirname, 'public')));
