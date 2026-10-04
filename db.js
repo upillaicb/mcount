@@ -114,7 +114,10 @@ function changeQuizSlug(id, newSlug) {
     const err = new Error('slug already in use'); err.code = 'DUP'; throw err;
   }
   db.transaction(() => {
+    db.pragma('defer_foreign_keys = ON');
     db.prepare(`UPDATE quizzes SET id=? WHERE id=?`).run(newSlug, id);
+    db.prepare(`UPDATE questions SET quiz_id=? WHERE quiz_id=?`).run(newSlug, id);
+    db.prepare(`UPDATE runs SET quiz_id=? WHERE quiz_id=?`).run(newSlug, id);
   })();
   return getQuiz(newSlug);
 }
