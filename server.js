@@ -2,7 +2,7 @@ const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 const db = require('./db');
-const dictionary = require('./dictionary');
+const decks = require('./decks');
 
 const app = express();
 const PORT = process.env.PORT || 5555;
@@ -10,16 +10,6 @@ const DEFAULT_ADMIN_TOKEN = 'admin123';
 // The local default is never used on Vercel; a public deployment must set ADMIN_TOKEN.
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || (process.env.VERCEL ? null : DEFAULT_ADMIN_TOKEN);
 if (!ADMIN_TOKEN) throw new Error('ADMIN_TOKEN must be set');
-
-// Log slow API requests so delays can be traced to the server, the database, or the dictionary.
-app.use('/api', (req, res, next) => {
-  const started = Date.now();
-  res.on('finish', () => {
-    const ms = Date.now() - started;
-    if (ms > 1500) console.warn(`slow request: ${req.method} ${req.originalUrl} -> ${res.statusCode} in ${ms}ms`);
-  });
-  next();
-});
 
 app.use(express.json({ limit: '2mb' }));
 app.use('/api/admin/quizzes/:id/upload', express.text({ type: '*/*', limit: '2mb' }));
@@ -258,70 +248,7 @@ app.get('/api/flashcards/:id', route(async (req, res) => {
   res.json(deck);
 }));
 
-// Stored pronunciation recordings. Content for an id never changes, so it is cached for a year.
-// Supports byte ranges, which Safari requires before it will play audio.
-app.param('aid', (req, res, next, aid) => /^\d{1,15}$/.test(aid) ? next() : res.status(404).end());
-
-app.get('/api/audio/:aid', route(async (req, res) => {
-  const file = await db.getAudio(req.params.aid);
-  if (!file) return res.status(404).end();
-  const total = file.data.length;
-  res.set({ 'Content-Type': file.contentType, 'Accept-Ranges': 'bytes', 'Cache-Control': 'public, max-age=31536000, immutable' });
-  const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
-  if (m && (m[1] || m[2])) {
-    const start = m[1] ? parseInt(m[1], 10) : Math.max(0, total - parseInt(m[2], 10));
-    const end = m[1] && m[2] ? Math.min(parseInt(m[2], 10), total - 1) : total - 1;
-    if (start >= total || start > end) return res.status(416).set('Content-Range', `bytes */${total}`).end();
-    res.status(206).set({ 'Content-Range': `bytes ${start}-${end}/${total}`, 'Content-Length': end - start + 1 });
-    return res.end(req.method === 'HEAD' ? undefined : file.data.subarray(start, end + 1));
-  }
-  res.set('Content-Length', total);
-  res.end(req.method === 'HEAD' ? undefined : file.data);
-}));
-
 // ---------- Admin: Flashcard decks ----------
-// Words are looked up one at a time (the free API throttles bursts), and each request
-// stops starting new words after LOOKUP_BUDGET_MS so it stays well inside serverless limits.
-const LOOKUP_BATCH = 10;
-const LOOKUP_BUDGET_MS = 20000;
-const dictionaryCache = { get: w => db.getDictionaryCache(w), set: (w, s, r) => db.setDictionaryCache(w, s, r) };
-
-// Looks a word up and stores the default selection. Never throws; failures mark the word 'error'.
-async function lookupDeckWord(deckId, row, force) {
-  const started = Date.now();
-  try {
-    const result = await dictionary.lookup(row.word, dictionaryCache, { force });
-    console.log(`lookup "${row.word}": ${result.status} in ${Date.now() - started}ms`);
-    if (result.status === 404) {
-      await db.setWordLookup(deckId, row.id, { lookupStatus: 'not_found', senses: [] });
-    } else {
-      const pick = dictionary.defaultSelection(dictionary.normalize(result.response));
-      await db.setWordLookup(deckId, row.id, { lookupStatus: pick.senses.length ? 'ready' : 'not_found', ...pick });
-    }
-  } catch (e) {
-    console.error(`lookup failed for "${row.word}":`, e.message);
-    await db.setWordLookup(deckId, row.id, { lookupStatus: 'error', senses: [], lookupError: e.message });
-  }
-}
-
-// Downloads the word's chosen recording into the database (reusing a stored copy of the
-// same source). Never throws; failures are saved so the admin can see them and retry.
-async function saveWordAudio(deckId, row) {
-  const started = Date.now();
-  try {
-    let audioId = await db.getAudioIdByUrl(row.audio_url);
-    if (!audioId) {
-      const file = await dictionary.fetchAudio(row.audio_url);
-      audioId = await db.saveAudio(row.audio_url, file.contentType, file.data);
-      console.log(`recording "${row.word}": ${file.data.length} bytes in ${Date.now() - started}ms`);
-    }
-    await db.setWordAudio(deckId, row.id, row.audio_url, { audioId });
-  } catch (e) {
-    console.error(`recording failed for "${row.word}":`, e.message);
-    await db.setWordAudio(deckId, row.id, row.audio_url, { audioError: e.message });
-  }
-}
-
 app.param('wid', (req, res, next, wid) => /^\d{1,15}$/.test(wid) ? next() : res.status(404).json({ error: 'not found' }));
 
 function parseSlug(raw) {
@@ -378,77 +305,20 @@ app.post('/api/admin/decks/:id/slug', requireAdmin, route(async (req, res) => {
 app.post('/api/admin/decks/:id/words', requireAdmin, route(async (req, res) => {
   if (!(await db.getDeck(req.params.id))) return res.status(404).json({ error: 'not found' });
   let parsed;
-  try { parsed = dictionary.parseWordList(req.body.text); }
+  try { parsed = decks.parseWordList(req.body.text); }
   catch (e) { return res.status(400).json({ error: e.message }); }
-  if (!parsed.words.length) return res.status(400).json({ error: 'no valid words found' });
-  const result = await db.addDeckWords(req.params.id, parsed.words, !!req.body.replace);
+  if (!parsed.entries.length) return res.status(400).json({ error: 'no valid words found' });
+  const result = await db.addDeckWords(req.params.id, parsed.entries, !!req.body.replace);
   res.json({ ...result, invalid: parsed.invalid });
-}));
-
-// Background work for a deck: dictionary lookups first, then saving recordings.
-// The admin page calls this until remaining is 0.
-app.post('/api/admin/decks/:id/lookup', requireAdmin, route(async (req, res) => {
-  const started = Date.now();
-  const outOfTime = () => Date.now() - started > LOOKUP_BUDGET_MS;
-  let processed = 0;
-  for (const row of await db.pendingDeckWords(req.params.id, LOOKUP_BATCH)) {
-    if (processed && outOfTime()) break;
-    await lookupDeckWord(req.params.id, row, false);
-    processed++;
-  }
-  if (!outOfTime()) {
-    for (const row of await db.pendingAudioWords(req.params.id, LOOKUP_BATCH)) {
-      if (processed && outOfTime()) break;
-      await saveWordAudio(req.params.id, row);
-      processed++;
-    }
-  }
-  const deck = await db.getDeck(req.params.id);
-  res.json({ processed, remaining: deck ? deck.pendingCount + deck.pendingAudioCount : 0 });
-}));
-
-app.post('/api/admin/decks/:id/retry-failed', requireAdmin, route(async (req, res) => {
-  res.json({ retried: await db.retryFailedWords(req.params.id) });
-}));
-
-// A word plus every dictionary meaning, for the admin's picker.
-app.get('/api/admin/decks/:id/words/:wid', requireAdmin, route(async (req, res) => {
-  const [deck, word] = await Promise.all([db.getDeck(req.params.id), db.getDeckWord(req.params.id, req.params.wid)]);
-  if (!deck || !word) return res.status(404).json({ error: 'not found' });
-  const cached = await db.getDictionaryCache(word.word.toLowerCase());
-  word.dictionary = cached && cached.status === 200 ? dictionary.normalize(cached.response) : null;
-  word.maxSenses = deck.maxSenses;
-  res.json(word);
 }));
 
 app.put('/api/admin/decks/:id/words/:wid', requireAdmin, route(async (req, res) => {
   const deck = await db.getDeck(req.params.id);
   if (!deck || !(await db.getDeckWord(req.params.id, req.params.wid))) return res.status(404).json({ error: 'not found' });
   let senses;
-  try { senses = dictionary.cleanSenses(req.body.senses, deck.maxSenses); }
+  try { senses = decks.cleanSenses(req.body.senses, deck.maxSenses); }
   catch (e) { return res.status(400).json({ error: e.message }); }
-  const phonetic = String(req.body.phonetic || '').trim().slice(0, 60) || null;
-  const requested = dictionary.httpsUrl(String(req.body.audioUrl || '').trim());
-  const audioUrl = requested && dictionary.isAllowedAudioUrl(requested) ? requested : null;
-  const word = await db.updateDeckWord(req.params.id, req.params.wid, { senses, phonetic, audioUrl });
-  // Save a newly chosen recording now so the picker and preview can play it straight away.
-  if (word.audioUrl && !word.audioId && !word.audioError) {
-    await saveWordAudio(req.params.id, { id: word.id, word: word.word, audio_url: word.audioUrl });
-    return res.json(await db.getDeckWord(req.params.id, req.params.wid));
-  }
-  res.json(word);
-}));
-
-app.post('/api/admin/decks/:id/words/:wid/relookup', requireAdmin, route(async (req, res) => {
-  const word = await db.getDeckWord(req.params.id, req.params.wid);
-  if (!word) return res.status(404).json({ error: 'not found' });
-  await lookupDeckWord(req.params.id, word, true);
-  const fresh = await db.getDeckWord(req.params.id, req.params.wid);
-  if (fresh.audioUrl && !fresh.audioId && !fresh.audioError) {
-    await saveWordAudio(req.params.id, { id: fresh.id, word: fresh.word, audio_url: fresh.audioUrl });
-    return res.json(await db.getDeckWord(req.params.id, req.params.wid));
-  }
-  res.json(fresh);
+  res.json(await db.updateDeckWord(req.params.id, req.params.wid, senses));
 }));
 
 app.delete('/api/admin/decks/:id/words/:wid', requireAdmin, route(async (req, res) => {

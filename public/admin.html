@@ -47,30 +47,18 @@
     .pcard .actions .minus { background: #fee2e2; border-color: #fca5a5; }
     .pcard .actions .rm { background: #fff; color: #b91c1c; }
     .badge.changes { background: #fde68a; color: #78350f; }
-    .badge.pending { background: #e2e8f0; color: #334155; }
-    .badge.ready { background: #dcfce7; color: #166534; }
-    .badge.not_found, .badge.error { background: #fee2e2; color: #991b1b; }
+    .badge.missing { background: #fee2e2; color: #991b1b; }
     .muted { color: #64748b; }
     .problems { background: #fef3c7; color: #78350f; border-radius: 6px; padding: .6rem .9rem; margin: .5rem 0; }
     .problems:empty { display: none; }
-    .progress { height: 10px; background: #e2e8f0; border-radius: 999px; overflow: hidden; flex: 1; min-width: 160px; }
-    .progress > div { height: 100%; background: #16a34a; width: 0; transition: width .3s; }
     .sense-summary { font-size: .9rem; color: #334155; }
     .pos { display: inline-block; font-size: .75rem; font-weight: 700; text-transform: uppercase; padding: .1rem .45rem; border-radius: 4px; background: #e0e7ff; color: #3730a3; margin-right: .3rem; }
-    dialog { width: min(820px, 96vw); max-height: 92vh; border: 0; border-radius: 12px; padding: 1.25rem 1.5rem; box-shadow: 0 20px 60px rgba(15, 23, 42, .35); }
+    dialog { width: min(720px, 96vw); max-height: 92vh; border: 0; border-radius: 12px; padding: 1.25rem 1.5rem; box-shadow: 0 20px 60px rgba(15, 23, 42, .35); }
     dialog::backdrop { background: rgba(15, 23, 42, .45); }
-    .picker-head { display: flex; align-items: baseline; gap: .75rem; flex-wrap: wrap; }
-    .picker-head h2 { margin: 0; font-size: 2rem; }
-    .meaning-group { border-top: 1px solid #e2e8f0; padding-top: .5rem; margin-top: .75rem; }
-    .meaning-group h4 { margin: .25rem 0 .4rem; }
-    .def-option { display: flex; gap: .6rem; align-items: flex-start; padding: .45rem .5rem; border-radius: 6px; cursor: pointer; }
-    .def-option:hover { background: #f1f5f9; }
-    .def-option input { margin-top: .25rem; }
-    .def-option em { display: block; color: #475569; font-size: .9rem; margin-top: .15rem; }
-    .def-option.disabled { opacity: .45; cursor: not-allowed; }
-    .chosen { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: .6rem .75rem; margin: .5rem 0; }
-    .chosen textarea, .chosen input, #customForm textarea, #customForm input { width: 100%; box-sizing: border-box; margin-top: .3rem; }
-    .chosen .row { justify-content: space-between; margin: 0; }
+    dialog h2 { margin: 0 0 .75rem; font-size: 2rem; }
+    .sense-edit { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: .6rem .75rem; margin: .5rem 0; }
+    .sense-edit textarea, .sense-edit input { width: 100%; box-sizing: border-box; margin-top: .3rem; }
+    .sense-edit .row { justify-content: space-between; margin: 0; }
     @media (max-width: 480px) {
       body { margin: 1rem auto; }
       .pcard { padding: .6rem .75rem; }
@@ -150,58 +138,34 @@
     <h3>Words</h3>
     <details id="addWords">
       <summary>Add words</summary>
-      <p class="muted">One word per line (commas also work). Each word is looked up in the dictionary automatically.</p>
-      <textarea id="wordText" rows="6" style="width:100%;box-sizing:border-box" placeholder="curious&#10;enormous&#10;whisper"></textarea>
+      <p class="muted">One word per line. Meanings are optional here; you can add them per word below.</p>
+      <p class="muted">
+        <code>word</code> &nbsp;or&nbsp; <code>word | meaning</code> &nbsp;or&nbsp;
+        <code>word | part of speech | meaning | example</code><br>
+        Repeat a word on another line to give it another meaning.
+      </p>
+      <textarea id="wordText" rows="6" style="width:100%;box-sizing:border-box" placeholder="curious | adjective | wanting to know or learn something | The curious cat opened the box.&#10;enormous | very big&#10;whisper"></textarea>
       <div class="row">
         <input type="file" id="wordFile" accept=".txt,.csv" />
         <button onclick="addWords(false)">Add to deck</button>
         <button class="danger" onclick="addWords(true)">Replace all words</button>
       </div>
     </details>
-    <div class="row" id="lookupRow">
-      <div class="progress"><div id="lookupBar"></div></div>
-      <span id="lookupText" class="muted"></span>
-      <button id="lookupBtn" onclick="runLookups()">Look up pending</button>
-      <button onclick="retryFailed()">Retry failed</button>
-    </div>
     <table>
-      <thead><tr><th>#</th><th>Word</th><th>Status</th><th>On the card</th><th>Actions</th></tr></thead>
+      <thead><tr><th>#</th><th>Word</th><th>On the card</th><th>Actions</th></tr></thead>
       <tbody id="wtable"></tbody>
     </table>
   </section>
 
-  <!-- Meaning picker -->
-  <dialog id="picker">
-    <div class="picker-head">
-      <h2 id="pkWord"></h2>
-      <input id="pkPhonetic" placeholder="/fəˈnɛtɪk/" style="width:12rem" title="Phonetic spelling" />
-      <span id="pkStatus"></span>
-    </div>
-    <h3 style="margin-bottom:.3rem">Pronunciation <small id="pkAudioStatus" class="muted" style="font-weight:400"></small></h3>
-    <div id="pkAudio" class="row"></div>
-
-    <h3 style="margin-bottom:.3rem">On the card <span id="pkCount" class="muted"></span></h3>
-    <div id="pkChosen"></div>
-    <details id="customForm">
-      <summary>✏️ Write your own meaning</summary>
-      <div class="row">
-        <select id="cfPos">
-          <option>noun</option><option>verb</option><option>adjective</option><option>adverb</option>
-          <option>pronoun</option><option>preposition</option><option>conjunction</option><option>interjection</option><option>other</option>
-        </select>
-      </div>
-      <textarea id="cfDef" rows="2" placeholder="Meaning in simple words"></textarea>
-      <input id="cfEx" placeholder="Example sentence (optional)" />
-      <div class="row"><button onclick="addCustomSense()">Add to card</button></div>
-    </details>
-
-    <h3 style="margin-bottom:.3rem">Dictionary meanings</h3>
-    <div id="pkMeanings"></div>
-
+  <!-- Word editor -->
+  <dialog id="wordEditor">
+    <h2 id="weWord"></h2>
+    <h3 style="margin-bottom:.3rem">Meanings <span id="weCount" class="muted"></span></h3>
+    <div id="weSenses"></div>
+    <div class="row"><button id="weAdd" onclick="addSense()">➕ Add meaning</button></div>
     <div class="row" style="justify-content:flex-end;margin-top:1rem;position:sticky;bottom:0;background:#fff;padding:.5rem 0">
-      <button id="pkRelookup" onclick="relookupWord()">↻ Look up again</button>
-      <button onclick="document.getElementById('picker').close()">Cancel</button>
-      <button id="pkSave" onclick="saveWord()" style="font-weight:700">Save</button>
+      <button onclick="document.getElementById('wordEditor').close()">Cancel</button>
+      <button id="weSave" onclick="saveWord()" style="font-weight:700">Save</button>
     </div>
   </dialog>
 
@@ -647,8 +611,8 @@
 
     // ---------- Flashcard decks ----------
     let currentDeckId = null;
-    let lookupRunning = false;
-    let picker = null;
+    let currentDeck = null;
+    let editing = null;
 
     function deckUrl(id) { return location.origin + '/app/#/flashcards/' + id; }
     function deckBadge(d) {
@@ -656,13 +620,6 @@
       return d.hasUnpublishedChanges
         ? '<span class="badge pub">Published</span> <span class="badge changes">Changes not published</span>'
         : '<span class="badge pub">Published</span>';
-    }
-    // Students only hear stored recordings; anything else falls back to the device voice.
-    function audioLabel(w) {
-      if (!w.audioUrl) return '🗣 device voice';
-      if (w.audioId) return '🔊 recording saved';
-      if (w.audioError) return '🔇 ' + escapeHtml(w.audioError) + ' (device voice used)';
-      return '⏳ saving recording…';
     }
     function posChip(pos) { return `<span class="pos">${escapeHtml(pos)}</span>`; }
 
@@ -678,7 +635,7 @@
           const url = deckUrl(d.id);
           tr.innerHTML = `
             <td><a class="link" data-deck="${d.id}">${escapeHtml(d.name)}</a></td>
-            <td>${d.wordCount}${d.pendingCount ? ` <small class="muted">(${d.pendingCount} pending)</small>` : ''}</td>
+            <td>${d.wordCount}</td>
             <td>${deckBadge(d)}</td>
             <td>${d.status === 'published' ? `<a class="url" href="${url}" target="_blank">${url}</a>` : '<span style="color:#94a3b8">not published</span>'}</td>
             <td>
@@ -715,25 +672,22 @@
     async function loadDeck() {
       if (!token || !currentDeckId) return;
       try {
-        const d = await api('/api/admin/decks/' + currentDeckId, { silent: true });
-        renderDeck(d);
-        if ((d.pendingCount || d.pendingAudioCount) && !lookupRunning) runLookups();
+        renderDeck(await api('/api/admin/decks/' + currentDeckId, { silent: true }));
       } catch (e) {}
     }
 
     function deckProblems(d) {
       const p = [];
       if (!d.words.length) p.push('Add at least one word.');
-      if (d.pendingCount) p.push(`${d.pendingCount} word(s) are still being looked up.`);
-      if (d.pendingAudioCount) p.push(`${d.pendingAudioCount} recording(s) are still being saved.`);
-      const empty = d.words.filter(w => w.lookupStatus !== 'pending' && !w.senses.length).map(w => w.word);
-      if (empty.length) p.push('No meaning chosen for: ' + empty.join(', ') + '. Write your own meaning or remove them.');
+      const empty = d.words.filter(w => !w.senses.length).map(w => w.word);
+      if (empty.length) p.push('No meaning yet for: ' + empty.join(', '));
       const many = d.words.filter(w => w.senses.length > d.maxSenses).map(w => w.word);
-      if (many.length) p.push(`More than ${d.maxSenses} meaning(s) chosen for: ` + many.join(', '));
+      if (many.length) p.push(`More than ${d.maxSenses} meaning(s) for: ` + many.join(', '));
       return p;
     }
 
     function renderDeck(d) {
+      currentDeck = d;
       const active = document.activeElement;
       const set = (id, v) => { const el = document.getElementById(id); if (active !== el) el.value = v; };
       set('deckName', d.name); set('deckDesc', d.description); set('deckMax', d.maxSenses);
@@ -745,42 +699,29 @@
         (d.hasUnpublishedChanges ? ' · edits since then are not visible to students until you publish again' : '');
       document.getElementById('deckProblems').innerHTML = deckProblems(d).map(escapeHtml).join('<br>');
 
-      const done = d.wordCount - d.pendingCount;
-      document.getElementById('lookupBar').style.width = (d.wordCount ? Math.round(done * 100 / d.wordCount) : 0) + '%';
-      document.getElementById('lookupText').textContent = !d.wordCount ? ''
-        : d.pendingCount ? `Looking up… ${done} of ${d.wordCount}`
-        : d.pendingAudioCount ? `Saving recordings… ${d.pendingAudioCount} left`
-        : `All ${d.wordCount} looked up`;
-
-      const labels = { pending: 'Looking up', ready: 'Ready', not_found: 'Not in dictionary', error: 'Lookup failed' };
       const tbody = document.getElementById('wtable');
       tbody.innerHTML = '';
-      if (!d.words.length) tbody.innerHTML = '<tr><td colspan="5" class="muted">No words yet. Use "Add words" above.</td></tr>';
+      if (!d.words.length) tbody.innerHTML = '<tr><td colspan="4" class="muted">No words yet. Use "Add words" above.</td></tr>';
       for (const w of d.words) {
         const tr = document.createElement('tr');
         const first = w.senses[0];
         const summary = first
           ? `${posChip(first.partOfSpeech)}${escapeHtml(first.definition.length > 90 ? first.definition.slice(0, 90) + '…' : first.definition)}` +
             (w.senses.length > 1 ? ` <small class="muted">+${w.senses.length - 1} more</small>` : '')
-          : '<span class="muted">—</span>';
+          : '<span class="badge missing">Needs a meaning</span>';
         tr.innerHTML = `
           <td class="muted">${w.position + 1}</td>
-          <td><b>${escapeHtml(w.word)}</b>${w.phonetic ? `<br><small class="muted">${escapeHtml(w.phonetic)}</small>` : ''}
-              <br><small class="${w.audioError ? 'danger' : 'muted'}">${audioLabel(w)}</small></td>
-          <td>${w.lookupStatus === 'not_found' && w.senses.length
-                ? '<span class="badge ready">Your meaning</span>'
-                : `<span class="badge ${w.lookupStatus}">${labels[w.lookupStatus]}</span>`}
-              ${w.lookupStatus === 'error' && w.lookupError ? `<br><small class="danger">${escapeHtml(w.lookupError)}</small>` : ''}</td>
+          <td><b>${escapeHtml(w.word)}</b></td>
           <td class="sense-summary">${summary}</td>
           <td>
-            <button data-wact="pick" data-wid="${w.id}" ${w.lookupStatus === 'pending' ? 'disabled' : ''}>Choose meanings</button>
+            <button data-wact="edit" data-wid="${w.id}">${w.senses.length ? 'Edit' : 'Add meaning'}</button>
             <button class="danger" data-wact="delete" data-wid="${w.id}" title="Remove word">✕</button>
           </td>`;
         tbody.appendChild(tr);
       }
       tbody.querySelectorAll('[data-wact]').forEach(b => {
         b.addEventListener('click', async () => {
-          if (b.dataset.wact === 'pick') openPicker(b.dataset.wid);
+          if (b.dataset.wact === 'edit') openWordEditor(b.dataset.wid);
           else if (confirm('Remove this word from the deck?')) {
             await api(`/api/admin/decks/${currentDeckId}/words/${b.dataset.wid}`, { method: 'DELETE' });
             loadDeck();
@@ -818,7 +759,7 @@
     }
 
     async function addWords(replace) {
-      if (replace && !confirm('Replace every word in this deck? Chosen meanings will be lost.')) return;
+      if (replace && !confirm('Replace every word in this deck? Existing meanings will be lost.')) return;
       const fileEl = document.getElementById('wordFile');
       const textEl = document.getElementById('wordText');
       let text = textEl.value;
@@ -831,34 +772,6 @@
       if (r.invalid.length) msg += ` Skipped (not a word): ${r.invalid.join(', ')}`;
       if (r.skipped || r.invalid.length) alert(msg);
       await loadDeck();
-    }
-
-    async function runLookups() {
-      if (lookupRunning || !currentDeckId) return;
-      lookupRunning = true;
-      const deckId = currentDeckId;
-      const btn = document.getElementById('lookupBtn');
-      btn.disabled = true;
-      try {
-        while (currentDeckId === deckId) {
-          const r = await api(`/api/admin/decks/${deckId}/lookup`, { method: 'POST', silent: true });
-          if (currentDeckId === deckId && !(picker && document.getElementById('picker').open)) {
-            const d = await api('/api/admin/decks/' + deckId, { silent: true });
-            renderDeck(d);
-          }
-          if (!r.processed || !r.remaining) break;
-        }
-      } catch (e) {
-      } finally {
-        lookupRunning = false;
-        btn.disabled = false;
-      }
-    }
-
-    async function retryFailed() {
-      const r = await api(`/api/admin/decks/${currentDeckId}/retry-failed`, { method: 'POST' });
-      if (!r.retried) alert('No failed lookups to retry.');
-      loadDeck();
     }
 
     async function previewDeck() { window.open('/app/#/flashcards/' + encodeURIComponent(currentDeckId) + '/preview', '_blank'); }
@@ -883,164 +796,70 @@
       location.hash = '';
     }
 
-    // ---------- Meaning picker ----------
-    async function openPicker(wid) {
-      const w = await api(`/api/admin/decks/${currentDeckId}/words/${wid}`);
-      const defs = new Set();
-      (w.dictionary ? w.dictionary.meanings : []).forEach(m => m.definitions.forEach(d => defs.add(d.definition)));
-      picker = {
-        word: w,
-        // source links a chosen meaning to its dictionary definition, even after rewording.
-        chosen: w.senses.map(s => ({ ...s, source: s.source || (defs.has(s.definition) ? s.definition : null) })),
-        audioUrl: w.audioUrl || ''
-      };
-      document.getElementById('pkWord').textContent = w.word;
-      document.getElementById('pkPhonetic').value = w.phonetic || '';
-      const labels = { ready: 'Ready', not_found: 'Not in dictionary', error: 'Lookup failed', pending: 'Looking up' };
-      document.getElementById('pkStatus').innerHTML = `<span class="badge ${w.lookupStatus}">${labels[w.lookupStatus]}</span>`;
-      document.getElementById('customForm').open = !w.dictionary;
-      renderPicker();
-      document.getElementById('picker').showModal();
+    // ---------- Word editor ----------
+    const PARTS_OF_SPEECH = ['noun', 'verb', 'adjective', 'adverb', 'pronoun', 'preposition', 'conjunction', 'interjection', 'other'];
+
+    function openWordEditor(wid) {
+      const w = currentDeck.words.find(x => String(x.id) === String(wid));
+      if (!w) return;
+      editing = { id: w.id, max: currentDeck.maxSenses, senses: w.senses.map(s => ({ ...s })) };
+      if (!editing.senses.length) editing.senses.push({ partOfSpeech: 'noun', definition: '', example: '' });
+      document.getElementById('weWord').textContent = w.word;
+      renderWordEditor();
+      document.getElementById('wordEditor').showModal();
+      const first = document.querySelector('#weSenses textarea');
+      if (first) first.focus();
     }
 
-    function playAudio(url, local) {
-      if (url && local) { new Audio(url).play().catch(() => alert('Could not play this recording.')); return; }
-      if (url) {
-        const audio = new Audio(url);
-        let started = false;
-        audio.addEventListener('playing', () => { started = true; }, { once: true });
-        audio.play().catch(() => { started = true; alert('Could not play this recording. Choose "Device voice" instead.'); });
-        // dictionaryapi.dev recordings can take minutes to load; students would hear nothing.
-        setTimeout(() => {
-          if (started) return;
-          audio.pause();
-          alert('This recording is slow to load from the dictionary site. That only affects this preview: once you save, the app stores its own copy for students.');
-        }, 4000);
-        return;
-      }
-      if ('speechSynthesis' in window) {
-        const u = new SpeechSynthesisUtterance(picker.word.word); u.lang = 'en-US';
-        speechSynthesis.cancel(); speechSynthesis.speak(u);
-      }
-    }
-
-    function renderPicker() {
-      const w = picker.word;
-      const max = w.maxSenses;
-      const dict = w.dictionary;
-
-      // Pronunciation choices: dictionary recordings, or the device's voice.
-      const audio = (dict ? dict.audio : []).slice();
-      if (picker.audioUrl && !audio.some(a => a.url === picker.audioUrl)) audio.push({ url: picker.audioUrl, accent: 'Saved' });
-      const pa = document.getElementById('pkAudio');
-      pa.innerHTML = '';
-      document.getElementById('pkAudioStatus').innerHTML = picker.audioUrl === (w.audioUrl || '') ? audioLabel(w)
-        : picker.audioUrl ? '⏳ will be saved when you click Save' : '🗣 device voice';
-      audio.concat([{ url: '', accent: 'Device voice', text: 'no recording' }]).forEach(a => {
-        const label = document.createElement('label');
-        label.className = 'row'; label.style.margin = '0 1rem 0 0';
-        label.innerHTML = `<input type="radio" name="pkAudio" ${picker.audioUrl === a.url ? 'checked' : ''}> ${escapeHtml(a.accent)}${a.text ? ` <small class="muted">${escapeHtml(a.text)}</small>` : ''}`;
-        label.querySelector('input').onchange = () => { picker.audioUrl = a.url; renderPicker(); };
-        const play = document.createElement('button'); play.type = 'button'; play.textContent = '▶'; play.title = 'Play';
-        // The saved copy plays instantly; other choices stream from the (slow) dictionary site.
-        const saved = a.url && a.url === w.audioUrl && w.audioId ? '/api/audio/' + w.audioId : null;
-        play.onclick = (ev) => { ev.preventDefault(); playAudio(saved || a.url, !!saved); };
-        label.appendChild(play);
-        pa.appendChild(label);
-      });
-
-      // Chosen meanings, editable.
-      document.getElementById('pkCount').textContent = `(${picker.chosen.length} of up to ${max})`;
-      const chosen = document.getElementById('pkChosen');
-      chosen.innerHTML = picker.chosen.length ? '' : '<p class="muted">Nothing chosen yet. Tick a dictionary meaning below or write your own.</p>';
-      picker.chosen.forEach((s, i) => {
+    function renderWordEditor() {
+      const list = document.getElementById('weSenses');
+      list.innerHTML = '';
+      document.getElementById('weCount').textContent = `(${editing.senses.length} of up to ${editing.max})`;
+      document.getElementById('weAdd').disabled = editing.senses.length >= editing.max;
+      editing.senses.forEach((s, i) => {
         const div = document.createElement('div');
-        div.className = 'chosen';
+        div.className = 'sense-edit';
+        const options = PARTS_OF_SPEECH.includes(s.partOfSpeech) ? PARTS_OF_SPEECH : PARTS_OF_SPEECH.concat(s.partOfSpeech);
         div.innerHTML = `
-          <div class="row">${posChip(s.partOfSpeech)}${s.custom ? '<small class="muted">your wording</small>' : ''}
-            <span><button type="button" data-move="-1" ${i === 0 ? 'disabled' : ''}>↑</button><button type="button" data-move="1" ${i === picker.chosen.length - 1 ? 'disabled' : ''}>↓</button><button type="button" class="danger" data-rm>✕</button></span></div>
-          <textarea rows="2"></textarea>
+          <div class="row">
+            <select>${options.map(p => `<option ${p === s.partOfSpeech ? 'selected' : ''}>${escapeHtml(p)}</option>`).join('')}</select>
+            <span><button type="button" data-move="-1" ${i === 0 ? 'disabled' : ''}>↑</button><button type="button" data-move="1" ${i === editing.senses.length - 1 ? 'disabled' : ''}>↓</button><button type="button" class="danger" data-rm>✕</button></span>
+          </div>
+          <textarea rows="2" placeholder="Meaning in simple words"></textarea>
           <input placeholder="Example sentence (optional)" />`;
+        const pos = div.querySelector('select');
         const ta = div.querySelector('textarea'); ta.value = s.definition;
         const ex = div.querySelector('input'); ex.value = s.example || '';
-        ta.oninput = () => { s.definition = ta.value; s.custom = !s.source || s.definition.trim() !== s.source; };
+        pos.onchange = () => { s.partOfSpeech = pos.value; };
+        ta.oninput = () => { s.definition = ta.value; };
         ex.oninput = () => { s.example = ex.value; };
-        div.querySelector('[data-rm]').onclick = () => { picker.chosen.splice(i, 1); renderPicker(); };
+        div.querySelector('[data-rm]').onclick = () => { editing.senses.splice(i, 1); renderWordEditor(); };
         div.querySelectorAll('[data-move]').forEach(b => b.onclick = () => {
           const j = i + parseInt(b.dataset.move, 10);
-          [picker.chosen[i], picker.chosen[j]] = [picker.chosen[j], picker.chosen[i]];
-          renderPicker();
+          [editing.senses[i], editing.senses[j]] = [editing.senses[j], editing.senses[i]];
+          renderWordEditor();
         });
-        chosen.appendChild(div);
+        list.appendChild(div);
       });
-
-      // All dictionary meanings, grouped by part of speech.
-      const full = picker.chosen.length >= max;
-      const pm = document.getElementById('pkMeanings');
-      pm.innerHTML = dict ? '' : `<p class="muted">${w.lookupStatus === 'error'
-        ? `The dictionary lookup failed${w.lookupError ? ` (${escapeHtml(w.lookupError)})` : ''}. Try "Look up again", or write your own meaning above.`
-        : 'This word is not in the dictionary. Write your own meaning above.'}</p>`;
-      (dict ? dict.meanings : []).forEach(m => {
-        const group = document.createElement('div');
-        group.className = 'meaning-group';
-        group.innerHTML = `<h4>${posChip(m.partOfSpeech)}</h4>`;
-        m.definitions.forEach(d => {
-          const idx = picker.chosen.findIndex(s => s.source === d.definition);
-          const checked = idx !== -1;
-          const label = document.createElement('label');
-          label.className = 'def-option' + (!checked && full ? ' disabled' : '');
-          label.innerHTML = `<input type="checkbox" ${checked ? 'checked' : ''} ${!checked && full ? 'disabled' : ''}>
-            <span>${escapeHtml(d.definition)}${d.example ? `<em>“${escapeHtml(d.example)}”</em>` : ''}${d.synonyms.length ? `<small class="muted">Similar: ${escapeHtml(d.synonyms.join(', '))}</small>` : ''}</span>`;
-          label.querySelector('input').onchange = () => {
-            if (checked) picker.chosen.splice(idx, 1);
-            else picker.chosen.push({ partOfSpeech: m.partOfSpeech, definition: d.definition, example: d.example, synonyms: d.synonyms, custom: false, source: d.definition });
-            renderPicker();
-          };
-          group.appendChild(label);
-        });
-        pm.appendChild(group);
-      });
-      if (full && dict) pm.insertAdjacentHTML('afterbegin', `<p class="muted">The card is full (${max} meanings). Remove one to pick another, or change "Meanings per card" in the deck settings.</p>`);
     }
 
-    function addCustomSense() {
-      const def = document.getElementById('cfDef').value.trim();
-      if (!def) return;
-      if (picker.chosen.length >= picker.word.maxSenses) { alert(`This card already has ${picker.word.maxSenses} meaning(s).`); return; }
-      picker.chosen.push({ partOfSpeech: document.getElementById('cfPos').value, definition: def,
-        example: document.getElementById('cfEx').value.trim(), synonyms: [], custom: true, source: null });
-      document.getElementById('cfDef').value = ''; document.getElementById('cfEx').value = '';
-      renderPicker();
-    }
-
-    // Disables a button and shows a working label until the action finishes.
-    async function busy(id, label, action) {
-      const btn = document.getElementById(id);
-      const original = btn.textContent;
-      btn.disabled = true; btn.textContent = label;
-      try { return await action(); }
-      finally { btn.disabled = false; btn.textContent = original; }
+    function addSense() {
+      if (editing.senses.length >= editing.max) return;
+      editing.senses.push({ partOfSpeech: 'noun', definition: '', example: '' });
+      renderWordEditor();
+      const all = document.querySelectorAll('#weSenses textarea');
+      all[all.length - 1].focus();
     }
 
     async function saveWord() {
-      const senses = picker.chosen.map(s => ({ ...s, definition: s.definition.trim() })).filter(s => s.definition);
-      // Saving may download a newly chosen recording, so allow extra time.
-      const saved = await busy('pkSave', 'Saving…', () =>
-        api(`/api/admin/decks/${currentDeckId}/words/${picker.word.id}`, { method: 'PUT', timeoutMs: 45000, body: {
-          senses, phonetic: document.getElementById('pkPhonetic').value.trim(), audioUrl: picker.audioUrl
-        } }).then(() => true, () => false));
-      if (!saved) return;
-      document.getElementById('picker').close();
-      loadDeck();
-    }
-
-    async function relookupWord() {
-      if (picker.chosen.length && !confirm('Look this word up again? Your chosen meanings will be replaced with the default.')) return;
-      const wid = picker.word.id;
-      const ok = await busy('pkRelookup', 'Looking up… (can take up to 40s)', () =>
-        api(`/api/admin/decks/${currentDeckId}/words/${wid}/relookup`, { method: 'POST' }).then(() => true, () => false));
-      if (!ok) return;
-      await openPicker(wid);
+      const senses = editing.senses.map(s => ({ ...s, definition: s.definition.trim() })).filter(s => s.definition);
+      const btn = document.getElementById('weSave');
+      btn.disabled = true; btn.textContent = 'Saving…';
+      try {
+        await api(`/api/admin/decks/${currentDeckId}/words/${editing.id}`, { method: 'PUT', timeoutMs: 20000, body: { senses } });
+      } catch (e) { return; }
+      finally { btn.disabled = false; btn.textContent = 'Save'; }
+      document.getElementById('wordEditor').close();
       loadDeck();
     }
 
@@ -1057,8 +876,8 @@
       if (deckM) {
         currentQuizId = null; currentRunId = null; currentDeckId = deckM[1];
         show('deck'); loadDeck();
-        // Skip background refreshes while the picker is open or lookups are refreshing the table.
-        refreshTimer = setInterval(() => { if (!lookupRunning && !document.getElementById('picker').open) loadDeck(); }, 4000);
+        // Skip background refreshes while a word is being edited.
+        refreshTimer = setInterval(() => { if (!document.getElementById('wordEditor').open) loadDeck(); }, 4000);
       } else if (runM) {
         currentQuizId = runM[1]; currentRunId = runM[2];
         show('run'); loadRun();

@@ -8,7 +8,6 @@
   let deckRequest = 0;
   let listSignature = '';
   let listLoaded = false;
-  let currentAudio = null;
   let swipe = null;
   let suppressClickUntil = 0;
   const KNOWN_POS = ['noun', 'verb', 'adjective', 'adverb', 'pronoun', 'preposition', 'conjunction', 'interjection'];
@@ -51,74 +50,27 @@
     return copy;
   }
 
-  // ---------- Audio ----------
-  // Recordings are hosted by dictionaryapi.dev, which can be very slow. The current card's
-  // recording is preloaded, and if it hasn't started within RECORDING_WAIT_MS the device
-  // voice is used instead (and that recording is skipped for the rest of the session).
-  const RECORDING_WAIT_MS = 2500;
-  const slowRecordings = {};
-  let preloaded = null;
+  // ---------- Pronunciation (device text-to-speech) ----------
   let currentButton = null;
-
-  function canSpeak(card) { return !!card.audioUrl || 'speechSynthesis' in window; }
-
-  function preload(card) {
-    if (!card.audioUrl || slowRecordings[card.audioUrl]) { preloaded = null; return; }
-    if (preloaded && preloaded.url === card.audioUrl) return;
-    preloaded = new Audio();
-    preloaded.preload = 'auto';
-    preloaded.url = card.audioUrl;
-    preloaded.src = card.audioUrl;
-  }
-
-  function setButton(button, mode) {
-    button.classList.toggle('loading', mode === 'loading');
-    button.classList.toggle('playing', mode === 'playing');
-  }
-
-  function speakWithVoice(word, button) {
-    const synth = window.speechSynthesis;
-    if (!synth) { setButton(button, null); return; }
-    const utterance = new SpeechSynthesisUtterance(word);
-    utterance.lang = 'en-US';
-    utterance.rate = .85;
-    utterance.onend = utterance.onerror = () => setButton(button, null);
-    setButton(button, 'playing');
-    // Chrome can drop or stall an utterance spoken right after cancel(); leave a short gap.
-    if (synth.speaking || synth.pending) { synth.cancel(); setTimeout(() => synth.speak(utterance), 80); }
-    else synth.speak(utterance);
-    if (synth.paused) synth.resume();
-  }
+  const canSpeak = 'speechSynthesis' in window;
 
   function stopAudio() {
-    if (currentAudio) { const audio = currentAudio; currentAudio = null; audio.pause(); }
-    if (currentButton) { setButton(currentButton, null); currentButton = null; }
+    if (currentButton) { currentButton.classList.remove('playing'); currentButton = null; }
     const synth = window.speechSynthesis;
     if (synth && (synth.speaking || synth.pending)) synth.cancel();
   }
 
   function speak(card, button) {
+    const synth = window.speechSynthesis;
     stopAudio();
     currentButton = button;
-    const url = card.audioUrl;
-    if (!url || slowRecordings[url]) { speakWithVoice(card.word, button); return; }
-    const audio = preloaded && preloaded.url === url ? preloaded : new Audio(url);
-    preloaded = null;
-    currentAudio = audio;
-    setButton(button, 'loading');
-    const fallBack = () => {
-      if (currentAudio !== audio) return;
-      slowRecordings[url] = true;
-      currentAudio = null;
-      audio.pause();
-      speakWithVoice(card.word, button);
-    };
-    const wait = setTimeout(fallBack, RECORDING_WAIT_MS);
-    audio.addEventListener('playing', () => { clearTimeout(wait); if (currentAudio === audio) setButton(button, 'playing'); }, { once: true });
-    audio.addEventListener('ended', () => { if (currentAudio === audio) { currentAudio = null; setButton(button, null); } }, { once: true });
-    try { audio.currentTime = 0; } catch (error) {}
-    // A rejected play() after stopAudio() is expected; fallBack ignores it because the audio is no longer current.
-    audio.play().catch(() => { clearTimeout(wait); fallBack(); });
+    const utterance = new SpeechSynthesisUtterance(card.word);
+    utterance.lang = 'en-US';
+    utterance.rate = .85;
+    utterance.onend = utterance.onerror = () => button.classList.remove('playing');
+    button.classList.add('playing');
+    // Chrome can drop an utterance spoken right after cancel(); leave a short gap.
+    setTimeout(() => { synth.speak(utterance); if (synth.paused) synth.resume(); }, 50);
   }
 
   function speakButton(card, large) {
@@ -154,8 +106,7 @@
     card.senses.map(sense => sense.partOfSpeech).filter((pos, i, all) => all.indexOf(pos) === i).forEach(pos => chips.appendChild(posChip(pos)));
     face.appendChild(chips);
     face.appendChild(make('h2', 'card-word', card.word));
-    if (card.phonetic) face.appendChild(make('p', 'card-phonetic', card.phonetic));
-    if (canSpeak(card)) face.appendChild(speakButton(card, true));
+    if (canSpeak) face.appendChild(speakButton(card, true));
     return face;
   }
 
@@ -166,7 +117,7 @@
     } else {
       const head = make('div', 'meaning-head');
       head.appendChild(make('span', 'meaning-word', card.word));
-      if (canSpeak(card)) head.appendChild(speakButton(card, false));
+      if (canSpeak) head.appendChild(speakButton(card, false));
       face.appendChild(head);
     }
     const list = make('ol', 'senses' + (card.senses.length === 1 ? ' single' : ''));
@@ -175,12 +126,6 @@
       item.appendChild(posChip(sense.partOfSpeech));
       item.appendChild(make('p', 'definition', sense.definition));
       if (sense.example) item.appendChild(exampleNode(sense.example, card.word, hideWord));
-      if (sense.synonyms && sense.synonyms.length && !hideWord) {
-        const similar = make('p', 'similar');
-        similar.appendChild(make('span', 'similar-label', 'Similar:'));
-        sense.synonyms.slice(0, 3).forEach(word => similar.appendChild(make('span', 'similar-word', word)));
-        item.appendChild(similar);
-      }
       list.appendChild(item);
     });
     face.appendChild(list);
@@ -290,7 +235,6 @@
     el['deck-progress-text'].textContent = (state.pos + 1) + ' / ' + total;
     el['deck-progress-bar'].style.width = Math.round((state.pos + 1) * 100 / total) + '%';
     if (state.rendered !== card || state.renderedReverse !== state.reverse) {
-      if (state.rendered !== card) preload(card);
       state.rendered = card;
       state.renderedReverse = state.reverse;
       setFace(el['card-front'], state.reverse ? meaningSide(card, true) : wordSide(card), state.flipped);

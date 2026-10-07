@@ -10,7 +10,7 @@ Supabase project for the Vercel deployment.
 
 - `server.js` — Express API; exports the app for Vercel and listens when run directly
 - `db.js` — Postgres data layer (postgres.js)
-- `dictionary.js` — dictionaryapi.dev lookups and flashcard helpers
+- `decks.js` — flashcard word-list parsing and validation
 - `supabase/migrations/` — database schema
 - `public/admin.html`, `public/quiz.html` — admin console and original participant view
 - `public/app/` — client SPA (no build step); `flashcards.js` is the vocabulary flashcard view
@@ -75,24 +75,24 @@ Notes:
 ## Vocabulary flashcards
 
 1. In the admin console, create a deck under **Flashcard decks** and paste or upload
-   a word list (one per line, or comma-separated; up to 300 per upload).
-2. Each word is looked up at `api.dictionaryapi.dev` in small batches, with a
-   progress bar. Responses are cached in the `dictionary_cache` table, so a word is
-   only fetched once across all decks. The chosen pronunciation recording is then
-   copied into the `audio_files` table and served from `/api/audio/<id>`, because
-   dictionaryapi.dev is too slow to play from directly. Words without a saved
-   recording use the device's voice.
-3. Click **Choose meanings** on a word to see every meaning grouped by part of
-   speech. Tick up to the deck's **Meanings per card** limit (default 3), reword
-   any meaning, or write your own (for words the dictionary doesn't have). Pick
-   a US/UK recording or the device voice for pronunciation.
-4. **Preview** opens the student view with the unpublished cards (uses the admin
+   a word list (up to 300 words per upload). Each line is one of:
+   ```
+   word
+   word | meaning
+   word | part of speech | meaning
+   word | part of speech | meaning | example
+   ```
+   Repeat a word on another line to give it more than one meaning.
+2. Click **Add meaning** / **Edit** on a word to type or change its meanings, up to
+   the deck's **Meanings per card** limit (default 3).
+3. **Preview** opens the student view with the unpublished cards (uses the admin
    token saved in this browser). **Publish** freezes a copy for students; later
    edits stay invisible until you publish again.
 
 Students open `/app/#/flashcards` to see published decks and study them: tap a
 card to flip it, use ‹ › (or swipe, or the arrow keys) to move between cards,
-and tap Listen for pronunciation. Shuffle and meaning-first are optional toggles.
+and tap Listen to hear the word in the device's built-in voice. Shuffle and
+meaning-first are optional toggles.
 
 ## Client SPA
 

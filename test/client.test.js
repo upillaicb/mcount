@@ -12,7 +12,7 @@ test('client catalog and assets are additive to existing routes', async context 
   const questions = [{ id: 1, text: '2 + 2?', answer: '4' }];
   let quizzes = [quiz, { id: 'draft', name: 'Draft quiz', activeRunId: null }];
   let activeRun = run;
-  const card = { word: 'bank', phonetic: '/bæŋk/', audioUrl: null, senses: [{ partOfSpeech: 'noun', definition: 'A place for money.', example: '', synonyms: [] }] };
+  const card = { word: 'bank', senses: [{ partOfSpeech: 'noun', definition: 'A place for money.', example: '' }] };
   const fixture = {
     listCatalog: async () => quizzes.filter(q => q.activeRunId).map(q => ({
       id: q.id, name: q.name, runId: activeRun.id, runName: activeRun.name,
@@ -24,7 +24,6 @@ test('client catalog and assets are additive to existing routes', async context 
     getRunQuestions: () => questions,
     listParticipants: () => [],
     listPublishedDecks: async () => [{ id: 'words', name: 'Week 1', description: '', cardCount: 1, publishedAt: 1 }],
-    getAudio: async id => String(id) === '7' ? { contentType: 'audio/mpeg', data: Buffer.from([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]) } : null,
     getPublishedDeck: async id => id === 'words' ? { id, name: 'Week 1', description: '', publishedAt: 1, cards: [card] } : null
   };
   let application;
@@ -78,22 +77,9 @@ test('client catalog and assets are additive to existing routes', async context 
   assert.equal((await decks.json())[0].id, 'words');
   assert.deepEqual((await (await fetch(base + '/api/flashcards/words')).json()).cards, [card]);
   assert.equal((await fetch(base + '/api/flashcards/missing')).status, 404);
-  const audio = await fetch(base + '/api/audio/7');
-  assert.equal(audio.status, 200);
-  assert.equal(audio.headers.get('content-type'), 'audio/mpeg');
-  assert.match(audio.headers.get('cache-control'), /immutable/);
-  assert.equal(Buffer.from(await audio.arrayBuffer()).length, 10);
-  const part = await fetch(base + '/api/audio/7', { headers: { Range: 'bytes=2-4' } });
-  assert.equal(part.status, 206, 'Safari needs byte ranges');
-  assert.equal(part.headers.get('content-range'), 'bytes 2-4/10');
-  assert.deepEqual([...Buffer.from(await part.arrayBuffer())], [2, 3, 4]);
-  assert.equal((await fetch(base + '/api/audio/7', { headers: { Range: 'bytes=-3' } })).headers.get('content-range'), 'bytes 7-9/10');
-  assert.equal((await fetch(base + '/api/audio/7', { headers: { Range: 'bytes=50-' } })).status, 416);
-  assert.equal((await fetch(base + '/api/audio/8')).status, 404);
-  assert.equal((await fetch(base + '/api/audio/abc')).status, 404);
   assert.equal((await fetch(base + '/api/admin/decks')).status, 401);
   assert.equal((await fetch(base + '/api/admin/decks/words/preview')).status, 401);
-  assert.equal((await fetch(base + '/api/admin/decks/words/words/abc', { headers: { 'X-Admin-Token': 'admin123' } })).status, 404);
+  assert.equal((await fetch(base + '/api/admin/decks/words/words/abc', { method: 'PUT', headers: { 'X-Admin-Token': 'admin123' } })).status, 404);
 
   for (const asset of ['/app/', '/app/app.js', '/app/flashcards.js', '/app/styles.css', '/app/sw.js', '/app/vendor/lucide.js']) {
     assert.equal((await fetch(base + asset)).status, 200, asset);

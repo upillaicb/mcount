@@ -167,7 +167,6 @@ body.quiz-mode { background: #0f172a; color: #f1f5f9; font-family: system-ui, sa
 .pos-noun { background: var(--noun); } .pos-verb { background: var(--verb); } .pos-adjective { background: var(--adjective); } .pos-adverb { background: var(--adverb); }
 .pos-pronoun { background: #0d9488; } .pos-preposition { background: #db2777; } .pos-conjunction { background: #4f46e5; } .pos-interjection { background: #d97706; }
 .card-word { font-size: clamp(44px, 9vw, 84px); line-height: 1.1; margin: 4px 0 0; overflow-wrap: anywhere; color: #1f2937; }
-.card-phonetic { margin: 0; font-size: 24px; color: var(--muted); font-family: "Lucida Sans Unicode", "Arial Unicode MS", sans-serif; }
 .card-hint-top { margin: 0 0 4px; text-align: center; font-weight: 700; color: var(--muted); font-size: 18px; }
 .speak { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 999px; background: #fff7d6; border-color: #fcd34d; color: #92400e; width: 48px; padding: 0; }
 .speak svg { width: 24px; height: 24px; }
@@ -175,7 +174,6 @@ body.quiz-mode { background: #0f172a; color: #f1f5f9; font-family: system-ui, sa
 .speak-large svg { width: 28px; height: 28px; }
 .speak:hover:not(:disabled) { background: #fef0b3; }
 .speak.playing { animation: speak-pulse .6s ease-in-out infinite alternate; }
-.speak.loading { opacity: .65; cursor: progress; }
 .meaning-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 2px dashed #d6e6f5; padding-bottom: 12px; }
 .meaning-word { font-size: 30px; font-weight: 800; overflow-wrap: anywhere; }
 .senses { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 18px; }
@@ -185,11 +183,6 @@ body.quiz-mode { background: #0f172a; color: #f1f5f9; font-family: system-ui, sa
 .example { margin: 0; font-size: 19px; line-height: 1.5; color: #475569; font-style: italic; }
 .example mark { background: #fde68a; color: inherit; font-weight: 700; font-style: normal; padding: 0 3px; border-radius: 4px; }
 .example .blank { font-style: normal; letter-spacing: .1em; color: #64748b; }
-.similar { margin: 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 15px; }
-.similar-label { color: var(--muted); font-weight: 700; margin-right: 2px; }
-.similar-word { background: #e0f2fe; color: #075985; padding: 3px 10px; border-radius: 999px; }
-.attribution { margin-top: 40px; text-align: center; font-size: 13px; color: #94a3b8; }
-.attribution a { color: inherit; }
 @keyframes speak-pulse { to { transform: scale(1.08); } }
 @media (max-width: 700px) {
   .app-nav a { padding: 8px 10px; font-size: 14px; }
@@ -199,7 +192,6 @@ body.quiz-mode { background: #0f172a; color: #f1f5f9; font-family: system-ui, sa
   #card-prev { grid-row: 2; justify-self: end; }
   #card-next { grid-row: 2; justify-self: start; }
   .card-face { min-height: 320px; padding: 28px 20px; border-radius: 20px; }
-  .card-phonetic { font-size: 20px; }
   .definition { font-size: 20px; } .senses.single .definition { font-size: 23px; }
   .example { font-size: 17px; }
   .tap-hint { margin-top: 12px; }
