@@ -133,9 +133,6 @@ body.quiz-mode { background: #0f172a; color: #f1f5f9; font-family: system-ui, sa
 /* ---------- Flashcard decks ---------- */
 :root { --noun: #2563eb; --verb: #16a34a; --adjective: #9333ea; --adverb: #ea580c; --other: #475569; --card: #fffdf7; }
 .deck-item { border-top-color: #f59e0b; }
-.deck-meter { height: 8px; background: #eef2ef; border-radius: 999px; overflow: hidden; margin-top: 16px; }
-.deck-meter div { height: 100%; background: #22c55e; border-radius: 999px; }
-.deck-known { color: #15803d !important; font-weight: 700; }
 .preview-banner { background: #fef3c7; color: #78350f; border: 1px solid #fcd34d; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; font-weight: 700; }
 .deck-progress { height: 10px; background: #e5ece7; border-radius: 999px; overflow: hidden; margin: -12px 0 20px; }
 #deck-progress-bar { height: 100%; width: 0; background: linear-gradient(90deg, #22c55e, #84cc16); border-radius: 999px; transition: width .3s ease; }
@@ -146,8 +143,13 @@ body.quiz-mode { background: #0f172a; color: #f1f5f9; font-family: system-ui, sa
 .chip-toggle svg { width: 18px; height: 18px; }
 .chip-toggle[aria-pressed="true"] { background: #e0f2e9; border-color: var(--green); color: var(--green); font-weight: 700; }
 
-.card-stage { perspective: 1600px; max-width: 760px; margin: 0 auto; }
-.flashcard { cursor: pointer; user-select: none; -webkit-user-select: none; touch-action: pan-y; }
+/* Card with < and > on either side. */
+.card-stage { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 20px; max-width: 900px; margin: 0 auto; }
+.card-arrow { width: 64px; height: 64px; border-radius: 999px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+.card-arrow svg { width: 34px; height: 34px; }
+.flashcard { perspective: 1600px; cursor: pointer; user-select: none; -webkit-user-select: none; touch-action: pan-y; border-radius: 24px; }
+.flashcard:focus { outline: none; }
+.flashcard:focus-visible { outline: 3px solid var(--green); outline-offset: 6px; }
 .card-inner { display: grid; transition: transform .5s cubic-bezier(.3, .7, .3, 1); transform-style: preserve-3d; }
 .flashcard.flipped .card-inner { transform: rotateY(180deg); }
 .card-face {
@@ -157,13 +159,15 @@ body.quiz-mode { background: #0f172a; color: #f1f5f9; font-family: system-ui, sa
   border: 3px solid #f1e6c8; box-shadow: 0 14px 0 -4px #f1e6c8, 0 24px 40px -18px rgba(32, 39, 39, .35);
 }
 .card-back { transform: rotateY(180deg); background: #f7fbff; border-color: #d6e6f5; box-shadow: 0 14px 0 -4px #d6e6f5, 0 24px 40px -18px rgba(32, 39, 39, .35); align-items: stretch; text-align: left; justify-content: flex-start; }
+.tap-hint { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 28px 0 0; color: #94a3b8; font-size: 16px; }
+.tap-hint svg { width: 18px; height: 18px; }
+
 .pos-row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 .pos-chip { display: inline-block; color: white; background: var(--other); font-size: 14px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; padding: 5px 12px; border-radius: 999px; }
 .pos-noun { background: var(--noun); } .pos-verb { background: var(--verb); } .pos-adjective { background: var(--adjective); } .pos-adverb { background: var(--adverb); }
 .pos-pronoun { background: #0d9488; } .pos-preposition { background: #db2777; } .pos-conjunction { background: #4f46e5; } .pos-interjection { background: #d97706; }
 .card-word { font-size: clamp(44px, 9vw, 84px); line-height: 1.1; margin: 4px 0 0; overflow-wrap: anywhere; color: #1f2937; }
 .card-phonetic { margin: 0; font-size: 24px; color: var(--muted); font-family: "Lucida Sans Unicode", "Arial Unicode MS", sans-serif; }
-.card-hint { margin: 8px 0 0; color: #94a3b8; font-size: 16px; }
 .card-hint-top { margin: 0 0 4px; text-align: center; font-weight: 700; color: var(--muted); font-size: 18px; }
 .speak { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 999px; background: #fff7d6; border-color: #fcd34d; color: #92400e; width: 48px; padding: 0; }
 .speak svg { width: 24px; height: 24px; }
@@ -183,48 +187,31 @@ body.quiz-mode { background: #0f172a; color: #f1f5f9; font-family: system-ui, sa
 .similar { margin: 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 15px; }
 .similar-label { color: var(--muted); font-weight: 700; margin-right: 2px; }
 .similar-word { background: #e0f2fe; color: #075985; padding: 3px 10px; border-radius: 999px; }
-.card-controls { display: flex; justify-content: center; align-items: center; gap: 18px; margin: 34px 0 0; }
-.card-controls .icon-button { width: 64px; height: 64px; border-radius: 999px; }
-.card-controls .icon-button svg { width: 30px; height: 30px; }
-.flip-button { display: inline-flex; align-items: center; gap: 10px; min-height: 64px; padding: 12px 30px; border-radius: 999px; font-size: 20px; }
-.flip-button svg { width: 22px; height: 22px; }
-.card-grade { display: flex; justify-content: center; gap: 16px; margin-top: 18px; flex-wrap: wrap; animation: arrive .2s ease-out; }
-.grade { display: inline-flex; align-items: center; gap: 10px; min-height: 60px; padding: 10px 26px; border-radius: 16px; font-size: 19px; font-weight: 800; border-width: 2px; }
-.grade svg { width: 22px; height: 22px; }
-.grade.known { background: #dcfce7; border-color: #22c55e; color: #166534; }
-.grade.known:hover:not(:disabled) { background: #bbf7d0; }
-.grade.learning { background: #ffedd5; border-color: #fb923c; color: #9a3412; }
-.grade.learning:hover:not(:disabled) { background: #fed7aa; }
-.deck-summary { max-width: 640px; margin: 20px auto; text-align: center; background: var(--card); border: 3px solid #f1e6c8; border-radius: 24px; padding: 40px 28px; }
-.summary-emoji { font-size: 72px; margin: 0; animation: pop .5s cubic-bezier(.3, 1.6, .5, 1); }
-.deck-summary h2 { font-size: 32px; margin: 12px 0; }
-.deck-summary p { font-size: 20px; color: var(--muted); line-height: 1.5; }
-.summary-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 24px; }
-.summary-actions button { display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; }
-.summary-actions svg { width: 20px; height: 20px; }
 .attribution { margin-top: 40px; text-align: center; font-size: 13px; color: #94a3b8; }
 .attribution a { color: inherit; }
 @keyframes speak-pulse { to { transform: scale(1.08); } }
-@keyframes pop { from { transform: scale(.3); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 @media (max-width: 700px) {
   .app-nav a { padding: 8px 10px; font-size: 14px; }
+  /* Arrows sit below the card on phones so the card keeps its width. */
+  .card-stage { grid-template-columns: 1fr 1fr; gap: 16px; }
+  .flashcard { grid-column: 1 / -1; grid-row: 1; }
+  #card-prev { grid-row: 2; justify-self: end; }
+  #card-next { grid-row: 2; justify-self: start; }
   .card-face { min-height: 320px; padding: 28px 20px; border-radius: 20px; }
   .card-phonetic { font-size: 20px; }
   .definition { font-size: 20px; } .senses.single .definition { font-size: 23px; }
   .example { font-size: 17px; }
-  .card-controls { gap: 12px; }
-  .flip-button { padding: 12px 20px; font-size: 18px; }
-  .grade { flex: 1; justify-content: center; padding: 10px 14px; font-size: 17px; }
+  .tap-hint { margin-top: 12px; }
 }
 @media (min-width: 1600px) {
-  .card-stage { max-width: 960px; }
+  .card-stage { max-width: 1100px; }
   .card-face { min-height: 480px; }
   .definition { font-size: 30px; } .senses.single .definition { font-size: 34px; }
   .example { font-size: 23px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .card-inner, #deck-progress-bar { transition: none; }
-  .speak.playing, .summary-emoji, .card-grade { animation: none; }
+  .speak.playing { animation: none; }
 }
 @media (max-width: 480px) {
   .app-header { flex-wrap: wrap; }

@@ -365,6 +365,7 @@ function mapWord(r) {
   return {
     id: r.id, word: r.word, position: r.position,
     lookupStatus: r.lookup_status,
+    lookupError: r.lookup_error || null,
     phonetic: r.phonetic, audioUrl: r.audio_url,
     senses: r.senses || []
   };
@@ -402,11 +403,11 @@ function pendingDeckWords(deckId, limit) {
   return sql`SELECT id, word FROM deck_words WHERE deck_id=${deckId} AND lookup_status='pending' ORDER BY position LIMIT ${limit}`;
 }
 
-async function setWordLookup(deckId, wordId, { lookupStatus, phonetic, audioUrl, senses }) {
+async function setWordLookup(deckId, wordId, { lookupStatus, phonetic, audioUrl, senses, lookupError }) {
   await sql.begin(async tx => {
     await tx`
       UPDATE deck_words SET lookup_status=${lookupStatus}, phonetic=${phonetic ?? null},
-        audio_url=${audioUrl ?? null}, senses=${sql.json(senses || [])}
+        audio_url=${audioUrl ?? null}, senses=${sql.json(senses || [])}, lookup_error=${lookupError ?? null}
       WHERE deck_id=${deckId} AND id=${wordId}`;
     await touchDeck(tx, deckId);
   });
@@ -414,8 +415,11 @@ async function setWordLookup(deckId, wordId, { lookupStatus, phonetic, audioUrl,
 
 async function updateDeckWord(deckId, wordId, { senses, phonetic, audioUrl }) {
   await sql.begin(async tx => {
+    // A failed lookup is resolved once the admin supplies meanings by hand.
     await tx`
-      UPDATE deck_words SET senses=${sql.json(senses)}, phonetic=${phonetic ?? null}, audio_url=${audioUrl ?? null}
+      UPDATE deck_words SET senses=${sql.json(senses)}, phonetic=${phonetic ?? null}, audio_url=${audioUrl ?? null},
+        lookup_status = CASE WHEN lookup_status = 'error' AND ${senses.length > 0} THEN 'ready' ELSE lookup_status END,
+        lookup_error = CASE WHEN ${senses.length > 0} THEN NULL ELSE lookup_error END
       WHERE deck_id=${deckId} AND id=${wordId}`;
     await touchDeck(tx, deckId);
   });
@@ -423,7 +427,7 @@ async function updateDeckWord(deckId, wordId, { senses, phonetic, audioUrl }) {
 }
 
 async function retryFailedWords(deckId) {
-  const rows = await sql`UPDATE deck_words SET lookup_status='pending' WHERE deck_id=${deckId} AND lookup_status='error' RETURNING id`;
+  const rows = await sql`UPDATE deck_words SET lookup_status='pending', lookup_error=NULL WHERE deck_id=${deckId} AND lookup_status='error' RETURNING id`;
   return rows.length;
 }
 

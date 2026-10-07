@@ -249,8 +249,10 @@ app.get('/api/flashcards/:id', route(async (req, res) => {
 }));
 
 // ---------- Admin: Flashcard decks ----------
-const LOOKUP_BATCH = 8;
-const LOOKUP_CONCURRENCY = 3;
+// Words are looked up one at a time (the free API throttles bursts), and each request
+// stops starting new words after LOOKUP_BUDGET_MS so it stays well inside serverless limits.
+const LOOKUP_BATCH = 10;
+const LOOKUP_BUDGET_MS = 20000;
 const dictionaryCache = { get: w => db.getDictionaryCache(w), set: (w, s, r) => db.setDictionaryCache(w, s, r) };
 
 // Looks a word up and stores the default selection. Never throws; failures mark the word 'error'.
@@ -265,7 +267,7 @@ async function lookupDeckWord(deckId, row, force) {
     }
   } catch (e) {
     console.error(`lookup failed for "${row.word}":`, e.message);
-    await db.setWordLookup(deckId, row.id, { lookupStatus: 'error', senses: [] });
+    await db.setWordLookup(deckId, row.id, { lookupStatus: 'error', senses: [], lookupError: e.message });
   }
 }
 
@@ -334,12 +336,16 @@ app.post('/api/admin/decks/:id/words', requireAdmin, route(async (req, res) => {
 
 // Looks up the next batch of pending words. The admin page calls this until remaining is 0.
 app.post('/api/admin/decks/:id/lookup', requireAdmin, route(async (req, res) => {
+  const started = Date.now();
   const rows = await db.pendingDeckWords(req.params.id, LOOKUP_BATCH);
-  for (let i = 0; i < rows.length; i += LOOKUP_CONCURRENCY) {
-    await Promise.all(rows.slice(i, i + LOOKUP_CONCURRENCY).map(row => lookupDeckWord(req.params.id, row, false)));
+  let processed = 0;
+  for (const row of rows) {
+    if (processed && Date.now() - started > LOOKUP_BUDGET_MS) break;
+    await lookupDeckWord(req.params.id, row, false);
+    processed++;
   }
   const deck = await db.getDeck(req.params.id);
-  res.json({ processed: rows.length, remaining: deck ? deck.pendingCount : 0 });
+  res.json({ processed, remaining: deck ? deck.pendingCount : 0 });
 }));
 
 app.post('/api/admin/decks/:id/retry-failed', requireAdmin, route(async (req, res) => {

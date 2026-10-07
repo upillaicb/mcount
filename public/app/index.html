@@ -74,32 +74,16 @@
           <button id="deck-reverse" class="chip-toggle" aria-pressed="false"><i data-lucide="repeat"></i><span>Meaning first</span></button>
         </div>
         <div class="card-stage">
-          <div id="flashcard" class="flashcard" aria-live="polite">
+          <button id="card-prev" class="card-arrow" aria-label="Previous card" title="Previous card"><i data-lucide="chevron-left"></i></button>
+          <div id="flashcard" class="flashcard" tabindex="0" data-nav-target aria-live="polite">
             <div class="card-inner">
               <div id="card-front" class="card-face card-front"></div>
               <div id="card-back" class="card-face card-back"></div>
             </div>
           </div>
+          <button id="card-next" class="card-arrow" aria-label="Next card" title="Next card"><i data-lucide="chevron-right"></i></button>
         </div>
-        <div class="card-controls">
-          <button id="card-prev" class="icon-button" aria-label="Previous card" title="Previous card"><i data-lucide="chevron-left"></i></button>
-          <button id="card-flip" class="primary flip-button"><i data-lucide="rotate-cw"></i><span>Flip card</span></button>
-          <button id="card-next" class="icon-button" aria-label="Next card" title="Next card"><i data-lucide="chevron-right"></i></button>
-        </div>
-        <div id="card-grade" class="card-grade" hidden>
-          <button id="card-learning" class="grade learning"><i data-lucide="rotate-ccw"></i><span>Still learning</span></button>
-          <button id="card-known" class="grade known"><i data-lucide="check"></i><span>Got it!</span></button>
-        </div>
-      </div>
-      <div id="deck-summary" class="deck-summary" hidden>
-        <p class="summary-emoji" aria-hidden="true">🎉</p>
-        <h2 id="summary-title"></h2>
-        <p id="summary-text"></p>
-        <div class="summary-actions">
-          <button id="summary-review" class="primary"><i data-lucide="rotate-ccw"></i><span id="summary-review-label">Review</span></button>
-          <button id="summary-restart"><i data-lucide="refresh-cw"></i><span>Start over</span></button>
-          <button id="summary-back"><i data-lucide="layers"></i><span>All flashcards</span></button>
-        </div>
+        <p class="tap-hint"><i data-lucide="pointer"></i><span>Tap the card to flip</span></p>
       </div>
       <p class="attribution">Definitions from <a href="https://en.wiktionary.org/" target="_blank" rel="noopener">Wiktionary</a> via dictionaryapi.dev, <a href="https://creativecommons.org/licenses/by-sa/3.0/" target="_blank" rel="noopener">CC BY-SA</a>.</p>
     </section>

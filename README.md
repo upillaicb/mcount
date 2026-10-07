@@ -87,9 +87,9 @@ Notes:
    token saved in this browser). **Publish** freezes a copy for students; later
    edits stay invisible until you publish again.
 
-Students open `/app/#/flashcards` to see published decks and study them: flip
-cards, listen to pronunciation, mark "Got it" / "Still learning", shuffle, or
-switch to meaning-first. Progress is stored on the device only.
+Students open `/app/#/flashcards` to see published decks and study them: tap a
+card to flip it, use ‹ › (or swipe, or the arrow keys) to move between cards,
+and tap Listen for pronunciation. Shuffle and meaning-first are optional toggles.
 
 ## Client SPA
 

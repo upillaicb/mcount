@@ -95,9 +95,33 @@ test('lookup uses the cache, caches 404s, and does not cache server errors', asy
   assert.equal(calls.length, 2, 'force bypasses the cache');
   assert.deepEqual(await dictionary.lookup('qwzx', cache, { fetchImpl }), { status: 404, response: null });
   assert.equal(store.get('qwzx').status, 404);
-  await assert.rejects(dictionary.lookup('busy', cache, { fetchImpl }), /429/);
+  const before = calls.length;
+  await assert.rejects(dictionary.lookup('busy', cache, { fetchImpl, retryDelays: [0, 0] }), /busy \(429/);
+  assert.equal(calls.length - before, 3, 'rate-limited lookups are retried twice');
   assert.equal(store.has('busy'), false);
   assert.ok(calls[0].endsWith('/entries/en/bank'));
+});
+
+test('lookup retries transient failures and reports why it failed', async () => {
+  const store = new Map();
+  const cache = { get: async w => store.get(w) || null, set: async (w, status, response) => { store.set(w, { status, response }); } };
+  let attempts = 0;
+  const flaky = async () => (++attempts === 1 ? { ok: false, status: 429 } : { ok: true, status: 200, json: async () => BANK });
+  assert.equal((await dictionary.lookup('giggle', cache, { fetchImpl: flaky, retryDelays: [0, 0] })).status, 200);
+  assert.equal(attempts, 2);
+
+  const offline = async () => { const e = new TypeError('fetch failed'); e.cause = { code: 'ENOTFOUND' }; throw e; };
+  await assert.rejects(dictionary.lookup('offline', cache, { fetchImpl: offline, retryDelays: [0] }), /Could not reach the dictionary \(ENOTFOUND\)/);
+
+  const hang = (url, { signal }) => new Promise((resolve, reject) => {
+    signal.addEventListener('abort', () => { const e = new Error('aborted'); e.name = 'AbortError'; reject(e); });
+  });
+  await assert.rejects(dictionary.fetchEntry('slow', { fetchImpl: hang, timeoutMs: 20 }), /did not respond within 0.02s/);
+
+  let serverErrors = 0;
+  const broken = async () => { serverErrors++; return { ok: false, status: 400 }; };
+  await assert.rejects(dictionary.lookup('bad', cache, { fetchImpl: broken, retryDelays: [0, 0] }), /Dictionary error \(400\)/);
+  assert.equal(serverErrors, 1, 'non-transient errors are not retried');
 });
 
 test('httpsUrl only accepts https and protocol-relative URLs', () => {

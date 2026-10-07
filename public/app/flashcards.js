@@ -1,5 +1,4 @@
 // Vocabulary flashcards: #/flashcards (deck list) and #/flashcards/<id>[/preview] (study).
-// Study progress is kept per device in localStorage; there are no student accounts.
 (function () {
   'use strict';
   let h = null;
@@ -19,12 +18,6 @@
   }
   function savePrefs(value) {
     try { localStorage.setItem('mcount_flash_prefs', JSON.stringify(value)); } catch (error) {}
-  }
-  function loadMarks(id) {
-    try { return JSON.parse(localStorage.getItem('mcount_deck_' + id)) || {}; } catch (error) { return {}; }
-  }
-  function saveMarks(id, marks) {
-    try { localStorage.setItem('mcount_deck_' + id, JSON.stringify(marks)); } catch (error) {}
   }
 
   async function getJson(url, headers) {
@@ -80,9 +73,14 @@
     button.classList.add('playing');
     const done = () => button.classList.remove('playing');
     if (card.audioUrl) {
-      currentAudio = new Audio(card.audioUrl);
-      currentAudio.addEventListener('ended', done);
-      currentAudio.play().catch(() => { done(); speakWithVoice(card.word); });
+      const audio = currentAudio = new Audio(card.audioUrl);
+      audio.addEventListener('ended', done);
+      // stopAudio() pauses a still-loading recording, which rejects play(). Only fall back
+      // to the device voice when this recording itself failed, not when it was stopped.
+      audio.play().catch(() => {
+        done();
+        if (currentAudio === audio) { currentAudio = null; speakWithVoice(card.word); }
+      });
     } else {
       speakWithVoice(card.word);
       setTimeout(done, 900);
@@ -116,7 +114,7 @@
     return p;
   }
 
-  function wordSide(card, isAnswer) {
+  function wordSide(card) {
     const face = document.createDocumentFragment();
     const chips = make('div', 'pos-row');
     card.senses.map(sense => sense.partOfSpeech).filter((pos, i, all) => all.indexOf(pos) === i).forEach(pos => chips.appendChild(posChip(pos)));
@@ -124,14 +122,13 @@
     face.appendChild(make('h2', 'card-word', card.word));
     if (card.phonetic) face.appendChild(make('p', 'card-phonetic', card.phonetic));
     if (canSpeak(card)) face.appendChild(speakButton(card, true));
-    face.appendChild(make('p', 'card-hint', isAnswer ? 'Did you get it right?' : 'Tap the card to see what it means'));
     return face;
   }
 
   function meaningSide(card, hideWord) {
     const face = document.createDocumentFragment();
     if (hideWord) {
-      face.appendChild(make('p', 'card-hint card-hint-top', 'Which word means…'));
+      face.appendChild(make('p', 'card-hint-top', 'Which word means…'));
     } else {
       const head = make('div', 'meaning-head');
       head.appendChild(make('span', 'meaning-word', card.word));
@@ -153,7 +150,6 @@
       list.appendChild(item);
     });
     face.appendChild(list);
-    if (hideWord) face.appendChild(make('p', 'card-hint', 'Say the word, then flip to check'));
     return face;
   }
 
@@ -172,20 +168,10 @@
       listSignature = signature;
       el.decks.textContent = '';
       decks.forEach(deck => {
-        const marks = loadMarks(deck.id);
-        const known = Object.keys(marks).filter(word => marks[word] === 'known').length;
         const item = make('article', 'quiz-item deck-item');
         item.appendChild(make('h2', '', deck.name));
         if (deck.description) item.appendChild(make('p', '', deck.description));
         item.appendChild(make('p', '', deck.cardCount + ' word' + (deck.cardCount === 1 ? '' : 's')));
-        if (known) {
-          const meter = make('div', 'deck-meter');
-          const bar = make('div');
-          bar.style.width = Math.min(100, Math.round(known * 100 / Math.max(1, deck.cardCount))) + '%';
-          meter.appendChild(bar);
-          item.appendChild(meter);
-          item.appendChild(make('p', 'deck-known', 'You know ' + Math.min(known, deck.cardCount) + ' of ' + deck.cardCount));
-        }
         const actions = make('div', 'quiz-actions');
         const button = make('button', 'primary');
         button.innerHTML = '<i data-lucide="layers"></i><span>Study</span>';
@@ -221,13 +207,8 @@
       current.deck = deck;
       el['deck-title'].textContent = deck.name;
       el['deck-message'].textContent = deck.problems && deck.problems.length ? 'Not ready to publish: ' + deck.problems.join(' ') : '';
-      if (!deck.cards.length) {
-        el['deck-message'].textContent = 'This deck has no cards yet.';
-        current.order = [];
-      } else if (changed) {
-        startSession('all');
-        return;
-      }
+      if (!deck.cards.length) el['deck-message'].textContent = 'This deck has no cards yet.';
+      if (changed) { startSession(); return; }
       render();
     } catch (error) {
       if (state !== current || version !== deckRequest) return;
@@ -242,17 +223,13 @@
     }
   }
 
-  function startSession(mode) {
-    const marks = loadMarks(state.id);
-    let order = state.deck.cards.map((card, index) => index);
-    if (mode === 'learning') order = order.filter(index => marks[state.deck.cards[index].word] === 'learning');
-    if (state.shuffle) order = shuffled(order);
-    state.order = order;
+  function startSession() {
+    const order = state.deck.cards.map((card, index) => index);
+    state.order = state.shuffle ? shuffled(order) : order;
     state.pos = 0;
     state.flipped = false;
-    state.finished = false;
     render();
-    el['card-flip'].focus();
+    if (state.order.length) el.flashcard.focus();
   }
 
   function setFace(face, content, hidden) {
@@ -264,29 +241,25 @@
 
   function render() {
     if (!state) return;
-    const deck = state.deck;
-    const studying = !!deck && state.order && state.order.length > 0 && !state.finished;
+    const studying = !!state.deck && state.order.length > 0;
     h.show(el['preview-banner'], state.preview);
     h.show(el['deck-study'], studying);
-    h.show(el['deck-summary'], !!deck && state.finished);
     el['deck-shuffle'].setAttribute('aria-pressed', String(state.shuffle));
     el['deck-reverse'].setAttribute('aria-pressed', String(state.reverse));
     if (!studying) {
       el['deck-progress-text'].textContent = '';
-      el['deck-progress-bar'].style.width = state.finished ? '100%' : '0';
-      if (state.finished) renderSummary();
-      h.icons();
+      el['deck-progress-bar'].style.width = '0';
       return;
     }
-    const card = deck.cards[state.order[state.pos]];
+    const card = state.deck.cards[state.order[state.pos]];
     const total = state.order.length;
     el['deck-progress-text'].textContent = (state.pos + 1) + ' / ' + total;
-    el['deck-progress-bar'].style.width = Math.round(state.pos * 100 / total) + '%';
+    el['deck-progress-bar'].style.width = Math.round((state.pos + 1) * 100 / total) + '%';
     if (state.rendered !== card || state.renderedReverse !== state.reverse) {
       state.rendered = card;
       state.renderedReverse = state.reverse;
-      setFace(el['card-front'], state.reverse ? meaningSide(card, true) : wordSide(card, false), state.flipped);
-      setFace(el['card-back'], state.reverse ? wordSide(card, true) : meaningSide(card, false), !state.flipped);
+      setFace(el['card-front'], state.reverse ? meaningSide(card, true) : wordSide(card), state.flipped);
+      setFace(el['card-back'], state.reverse ? wordSide(card) : meaningSide(card, false), !state.flipped);
     } else {
       [['card-front', state.flipped], ['card-back', !state.flipped]].forEach(pair => {
         el[pair[0]].setAttribute('aria-hidden', pair[1] ? 'true' : 'false');
@@ -294,50 +267,26 @@
       });
     }
     el.flashcard.classList.toggle('flipped', state.flipped);
-    el.flashcard.setAttribute('aria-label', 'Card ' + (state.pos + 1) + ' of ' + total + ', ' + (state.flipped ? 'back' : 'front'));
-    el['card-flip'].querySelector('span').textContent = state.flipped ? 'Flip back' : state.reverse ? 'Show the word' : 'Show meaning';
+    el.flashcard.setAttribute('aria-label', 'Card ' + (state.pos + 1) + ' of ' + total + ', ' + (state.flipped ? 'back' : 'front') + '. Press Enter to flip.');
     el['card-prev'].disabled = state.pos === 0;
-    el['card-next'].setAttribute('aria-label', state.pos === total - 1 ? 'Finish' : 'Next card');
-    h.show(el['card-grade'], state.flipped);
+    el['card-next'].disabled = state.pos === total - 1;
     h.icons();
   }
 
-  function renderSummary() {
-    const marks = loadMarks(state.id);
-    const words = state.order.map(index => state.deck.cards[index].word);
-    const known = words.filter(word => marks[word] === 'known').length;
-    const learning = words.filter(word => marks[word] === 'learning').length;
-    el['summary-title'].textContent = known === words.length ? 'Amazing! You know all ' + words.length + ' words!' : 'Nice work!';
-    el['summary-text'].textContent = 'You know ' + known + ' of ' + words.length + ' words.' +
-      (learning ? ' ' + learning + ' still learning. Practice makes perfect!' : '');
-    h.show(el['summary-review'], learning > 0);
-    el['summary-review-label'].textContent = 'Review ' + learning + ' still learning';
-  }
-
   function flip() {
-    if (!state || !state.deck || state.finished) return;
+    if (!state || !state.deck || !state.order.length) return;
     state.flipped = !state.flipped;
     render();
   }
 
   function go(step) {
     if (!state || !state.order.length) return;
+    const next = Math.max(0, Math.min(state.order.length - 1, state.pos + step));
+    if (next === state.pos) return;
     stopAudio();
-    const next = state.pos + step;
-    if (next < 0) return;
-    if (next >= state.order.length) { state.finished = true; render(); el['summary-restart'].focus(); return; }
     state.pos = next;
     state.flipped = false;
     render();
-  }
-
-  function grade(mark) {
-    const marks = loadMarks(state.id);
-    marks[state.deck.cards[state.order[state.pos]].word] = mark;
-    saveMarks(state.id, marks);
-    listSignature = '';
-    go(1);
-    if (!state.finished) el['card-flip'].focus();
   }
 
   // ---------- Public interface (used by app.js routing) ----------
@@ -353,7 +302,7 @@
       return;
     }
     const saved = prefs();
-    state = { id: id, preview: preview, deck: null, order: [], pos: 0, flipped: false, finished: false, shuffle: !!saved.shuffle, reverse: !!saved.reverse };
+    state = { id: id, preview: preview, deck: null, order: [], pos: 0, flipped: false, shuffle: !!saved.shuffle, reverse: !!saved.reverse };
     listRequest++;
     el['deck-title'].textContent = 'Loading...';
     el['deck-message'].textContent = '';
@@ -376,6 +325,7 @@
     else if (manual || !state.deck) loadDeck();
   }
 
+  // Left/Right change cards (also on TV remotes); Enter/Space flips the focused card.
   function handleKey(event) {
     if (!state) return false;
     if (event.key === 'Escape' || event.keyCode === 461) {
@@ -383,8 +333,13 @@
       location.hash = '/flashcards';
       return true;
     }
-    const tag = document.activeElement && document.activeElement.tagName;
-    if ((event.key === ' ' || event.key === 'Enter') && tag !== 'BUTTON' && tag !== 'A' && !state.finished) {
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      go(event.key === 'ArrowRight' ? 1 : -1);
+      return true;
+    }
+    const active = document.activeElement;
+    if ((event.key === ' ' || event.key === 'Enter') && (active === el.flashcard || active === document.body || active === el.main)) {
       event.preventDefault();
       flip();
       return true;
@@ -396,18 +351,12 @@
     h = helpers;
     el = helpers.elements;
     el['deck-back'].addEventListener('click', () => { location.hash = '/flashcards'; });
-    el['card-flip'].addEventListener('click', flip);
     el['card-prev'].addEventListener('click', () => go(-1));
     el['card-next'].addEventListener('click', () => go(1));
-    el['card-known'].addEventListener('click', () => grade('known'));
-    el['card-learning'].addEventListener('click', () => grade('learning'));
-    el['summary-review'].addEventListener('click', () => startSession('learning'));
-    el['summary-restart'].addEventListener('click', () => startSession('all'));
-    el['summary-back'].addEventListener('click', () => { location.hash = '/flashcards'; });
     el['deck-shuffle'].addEventListener('click', () => {
       state.shuffle = !state.shuffle;
       savePrefs({ shuffle: state.shuffle, reverse: state.reverse });
-      if (state.deck && state.deck.cards.length) startSession('all');
+      if (state.deck && state.deck.cards.length) startSession();
     });
     el['deck-reverse'].addEventListener('click', () => {
       state.reverse = !state.reverse;

@@ -23,32 +23,61 @@ function parseWordList(text) {
   return { words, invalid };
 }
 
-// Returns { status, response }. 200 and 404 are cacheable; anything else throws.
-async function fetchEntry(word, { timeoutMs = 5000, fetchImpl = fetch } = {}) {
+function lookupError(message, retryable) {
+  const err = new Error(message);
+  err.retryable = retryable;
+  return err;
+}
+
+// Returns { status, response }. 200 and 404 are cacheable; anything else throws an
+// error with an admin-readable message and a retryable flag.
+async function fetchEntry(word, { timeoutMs = 10000, fetchImpl = fetch } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetchImpl(API + encodeURIComponent(word.toLowerCase()), {
-      headers: { Accept: 'application/json' }, signal: controller.signal
-    });
+    let res;
+    try {
+      res = await fetchImpl(API + encodeURIComponent(word.toLowerCase()), {
+        headers: { Accept: 'application/json' }, signal: controller.signal
+      });
+    } catch (e) {
+      if (e.name === 'AbortError') throw lookupError(`Dictionary did not respond within ${timeoutMs / 1000}s`, true);
+      const cause = e.cause && (e.cause.code || e.cause.message);
+      throw lookupError('Could not reach the dictionary' + (cause ? ` (${cause})` : ''), true);
+    }
     if (res.status === 404) return { status: 404, response: null };
-    if (!res.ok) throw new Error(`dictionary lookup failed (${res.status})`);
-    return { status: 200, response: await res.json() };
+    if (res.status === 429) throw lookupError('Dictionary is busy (429 rate limited)', true);
+    if (!res.ok) throw lookupError(`Dictionary error (${res.status})`, res.status >= 500);
+    try {
+      return { status: 200, response: await res.json() };
+    } catch (e) {
+      throw lookupError(e.name === 'AbortError' ? `Dictionary did not respond within ${timeoutMs / 1000}s` : 'Dictionary sent an unreadable response', true);
+    }
   } finally {
     clearTimeout(timer);
   }
 }
 
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
 // Uses the cache ({ get(word), set(word, status, response) }) unless force is set.
-async function lookup(word, cache, { force = false, fetchImpl } = {}) {
+// Retries slow or rate-limited requests; the free API is often both.
+async function lookup(word, cache, { force = false, fetchImpl, retryDelays = [1000, 3000] } = {}) {
   const key = word.toLowerCase();
   if (!force) {
     const hit = await cache.get(key);
     if (hit) return hit;
   }
-  const fresh = await fetchEntry(key, { fetchImpl });
-  await cache.set(key, fresh.status, fresh.response);
-  return fresh;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const fresh = await fetchEntry(key, { fetchImpl });
+      await cache.set(key, fresh.status, fresh.response);
+      return fresh;
+    } catch (e) {
+      if (!e.retryable || attempt >= retryDelays.length) throw e;
+      await sleep(retryDelays[attempt]);
+    }
+  }
 }
 
 function accentOf(url) {

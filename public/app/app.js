@@ -365,7 +365,7 @@
     }
     if (view === 'flashcards' && window.MCountFlashcards.handleKey(event)) return;
     if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].indexOf(event.key) === -1) return;
-    const controls = Array.from(document.querySelectorAll('button:not(:disabled), a')).filter(element => element.getClientRects().length);
+    const controls = Array.from(document.querySelectorAll('button:not(:disabled), a, [data-nav-target]')).filter(element => element.getClientRects().length);
     const active = document.activeElement;
     const origin = active.getBoundingClientRect();
     const horizontal = event.key === 'ArrowLeft' || event.key === 'ArrowRight';

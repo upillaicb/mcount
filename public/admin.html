@@ -746,7 +746,10 @@
         tr.innerHTML = `
           <td class="muted">${w.position + 1}</td>
           <td><b>${escapeHtml(w.word)}</b>${w.phonetic ? `<br><small class="muted">${escapeHtml(w.phonetic)}</small>` : ''}</td>
-          <td><span class="badge ${w.lookupStatus}">${labels[w.lookupStatus]}</span></td>
+          <td>${w.lookupStatus === 'not_found' && w.senses.length
+                ? '<span class="badge ready">Your meaning</span>'
+                : `<span class="badge ${w.lookupStatus}">${labels[w.lookupStatus]}</span>`}
+              ${w.lookupStatus === 'error' && w.lookupError ? `<br><small class="danger">${escapeHtml(w.lookupError)}</small>` : ''}</td>
           <td class="sense-summary">${summary}</td>
           <td>
             <button data-wact="pick" data-wid="${w.id}" ${w.lookupStatus === 'pending' ? 'disabled' : ''}>Choose meanings</button>
@@ -936,7 +939,9 @@
       // All dictionary meanings, grouped by part of speech.
       const full = picker.chosen.length >= max;
       const pm = document.getElementById('pkMeanings');
-      pm.innerHTML = dict ? '' : `<p class="muted">${w.lookupStatus === 'error' ? 'The dictionary lookup failed. Try "Look up again".' : 'This word is not in the dictionary. Write your own meaning above.'}</p>`;
+      pm.innerHTML = dict ? '' : `<p class="muted">${w.lookupStatus === 'error'
+        ? `The dictionary lookup failed${w.lookupError ? ` (${escapeHtml(w.lookupError)})` : ''}. Try "Look up again", or write your own meaning above.`
+        : 'This word is not in the dictionary. Write your own meaning above.'}</p>`;
       (dict ? dict.meanings : []).forEach(m => {
         const group = document.createElement('div');
         group.className = 'meaning-group';
