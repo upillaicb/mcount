@@ -175,6 +175,7 @@ body.quiz-mode { background: #0f172a; color: #f1f5f9; font-family: system-ui, sa
 .speak-large svg { width: 28px; height: 28px; }
 .speak:hover:not(:disabled) { background: #fef0b3; }
 .speak.playing { animation: speak-pulse .6s ease-in-out infinite alternate; }
+.speak.loading { opacity: .65; cursor: progress; }
 .meaning-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 2px dashed #d6e6f5; padding-bottom: 12px; }
 .meaning-word { font-size: 30px; font-weight: 800; overflow-wrap: anywhere; }
 .senses { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 18px; }

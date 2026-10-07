@@ -199,9 +199,9 @@
     <div id="pkMeanings"></div>
 
     <div class="row" style="justify-content:flex-end;margin-top:1rem;position:sticky;bottom:0;background:#fff;padding:.5rem 0">
-      <button onclick="relookupWord()">↻ Look up again</button>
+      <button id="pkRelookup" onclick="relookupWord()">↻ Look up again</button>
       <button onclick="document.getElementById('picker').close()">Cancel</button>
-      <button onclick="saveWord()" style="font-weight:700">Save</button>
+      <button id="pkSave" onclick="saveWord()" style="font-weight:700">Save</button>
     </div>
   </dialog>
 
@@ -321,7 +321,17 @@
         opts.headers['Content-Type'] = 'application/json';
         opts.body = JSON.stringify(opts.body);
       }
-      const r = await fetch(path, opts);
+      // Never wait forever: a hung request should surface as an error, not as "nothing happens".
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), opts.timeoutMs || 90000);
+      opts.signal = controller.signal;
+      let r;
+      try { r = await fetch(path, opts); }
+      catch (e) {
+        const msg = e.name === 'AbortError' ? 'The server took too long to respond. Check the terminal running the server.' : 'Cannot reach the server.';
+        if (!silent) alert(msg);
+        throw new Error(msg);
+      } finally { clearTimeout(timer); }
       if (r.status === 401) { if (!silent) alert('Unauthorized. Check token.'); throw new Error('401'); }
       if (!r.ok) { const t = await r.text(); if (!silent) alert('Error: ' + t); throw new Error(t); }
       return r.json();
@@ -883,7 +893,19 @@
     }
 
     function playAudio(url) {
-      if (url) { new Audio(url).play().catch(() => alert('Could not play this recording.')); return; }
+      if (url) {
+        const audio = new Audio(url);
+        let started = false;
+        audio.addEventListener('playing', () => { started = true; }, { once: true });
+        audio.play().catch(() => { started = true; alert('Could not play this recording. Choose "Device voice" instead.'); });
+        // dictionaryapi.dev recordings can take minutes to load; students would hear nothing.
+        setTimeout(() => {
+          if (started) return;
+          audio.pause();
+          alert('This recording is very slow to load from the dictionary site. Students will hear the device voice instead if it does not start within a few seconds. Choose "Device voice" to always use it.');
+        }, 4000);
+        return;
+      }
       if ('speechSynthesis' in window) {
         const u = new SpeechSynthesisUtterance(picker.word.word); u.lang = 'en-US';
         speechSynthesis.cancel(); speechSynthesis.speak(u);
@@ -975,13 +997,22 @@
       renderPicker();
     }
 
+    // Disables a button and shows a working label until the action finishes.
+    async function busy(id, label, action) {
+      const btn = document.getElementById(id);
+      const original = btn.textContent;
+      btn.disabled = true; btn.textContent = label;
+      try { return await action(); }
+      finally { btn.disabled = false; btn.textContent = original; }
+    }
+
     async function saveWord() {
       const senses = picker.chosen.map(s => ({ ...s, definition: s.definition.trim() })).filter(s => s.definition);
-      try {
-        await api(`/api/admin/decks/${currentDeckId}/words/${picker.word.id}`, { method: 'PUT', body: {
+      const saved = await busy('pkSave', 'Saving…', () =>
+        api(`/api/admin/decks/${currentDeckId}/words/${picker.word.id}`, { method: 'PUT', timeoutMs: 20000, body: {
           senses, phonetic: document.getElementById('pkPhonetic').value.trim(), audioUrl: picker.audioUrl
-        } });
-      } catch (e) { return; }
+        } }).then(() => true, () => false));
+      if (!saved) return;
       document.getElementById('picker').close();
       loadDeck();
     }
@@ -989,7 +1020,9 @@
     async function relookupWord() {
       if (picker.chosen.length && !confirm('Look this word up again? Your chosen meanings will be replaced with the default.')) return;
       const wid = picker.word.id;
-      await api(`/api/admin/decks/${currentDeckId}/words/${wid}/relookup`, { method: 'POST' });
+      const ok = await busy('pkRelookup', 'Looking up… (can take up to 40s)', () =>
+        api(`/api/admin/decks/${currentDeckId}/words/${wid}/relookup`, { method: 'POST' }).then(() => true, () => false));
+      if (!ok) return;
       await openPicker(wid);
       loadDeck();
     }

@@ -52,39 +52,73 @@
   }
 
   // ---------- Audio ----------
+  // Recordings are hosted by dictionaryapi.dev, which can be very slow. The current card's
+  // recording is preloaded, and if it hasn't started within RECORDING_WAIT_MS the device
+  // voice is used instead (and that recording is skipped for the rest of the session).
+  const RECORDING_WAIT_MS = 2500;
+  const slowRecordings = {};
+  let preloaded = null;
+  let currentButton = null;
+
   function canSpeak(card) { return !!card.audioUrl || 'speechSynthesis' in window; }
 
-  function speakWithVoice(word) {
-    if (!('speechSynthesis' in window)) return;
+  function preload(card) {
+    if (!card.audioUrl || slowRecordings[card.audioUrl]) { preloaded = null; return; }
+    if (preloaded && preloaded.url === card.audioUrl) return;
+    preloaded = new Audio();
+    preloaded.preload = 'auto';
+    preloaded.url = card.audioUrl;
+    preloaded.src = card.audioUrl;
+  }
+
+  function setButton(button, mode) {
+    button.classList.toggle('loading', mode === 'loading');
+    button.classList.toggle('playing', mode === 'playing');
+  }
+
+  function speakWithVoice(word, button) {
+    const synth = window.speechSynthesis;
+    if (!synth) { setButton(button, null); return; }
     const utterance = new SpeechSynthesisUtterance(word);
     utterance.lang = 'en-US';
     utterance.rate = .85;
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utterance);
+    utterance.onend = utterance.onerror = () => setButton(button, null);
+    setButton(button, 'playing');
+    // Chrome can drop or stall an utterance spoken right after cancel(); leave a short gap.
+    if (synth.speaking || synth.pending) { synth.cancel(); setTimeout(() => synth.speak(utterance), 80); }
+    else synth.speak(utterance);
+    if (synth.paused) synth.resume();
   }
 
   function stopAudio() {
-    if (currentAudio) { currentAudio.pause(); currentAudio = null; }
-    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    if (currentAudio) { const audio = currentAudio; currentAudio = null; audio.pause(); }
+    if (currentButton) { setButton(currentButton, null); currentButton = null; }
+    const synth = window.speechSynthesis;
+    if (synth && (synth.speaking || synth.pending)) synth.cancel();
   }
 
   function speak(card, button) {
     stopAudio();
-    button.classList.add('playing');
-    const done = () => button.classList.remove('playing');
-    if (card.audioUrl) {
-      const audio = currentAudio = new Audio(card.audioUrl);
-      audio.addEventListener('ended', done);
-      // stopAudio() pauses a still-loading recording, which rejects play(). Only fall back
-      // to the device voice when this recording itself failed, not when it was stopped.
-      audio.play().catch(() => {
-        done();
-        if (currentAudio === audio) { currentAudio = null; speakWithVoice(card.word); }
-      });
-    } else {
-      speakWithVoice(card.word);
-      setTimeout(done, 900);
-    }
+    currentButton = button;
+    const url = card.audioUrl;
+    if (!url || slowRecordings[url]) { speakWithVoice(card.word, button); return; }
+    const audio = preloaded && preloaded.url === url ? preloaded : new Audio(url);
+    preloaded = null;
+    currentAudio = audio;
+    setButton(button, 'loading');
+    const fallBack = () => {
+      if (currentAudio !== audio) return;
+      slowRecordings[url] = true;
+      currentAudio = null;
+      audio.pause();
+      speakWithVoice(card.word, button);
+    };
+    const wait = setTimeout(fallBack, RECORDING_WAIT_MS);
+    audio.addEventListener('playing', () => { clearTimeout(wait); if (currentAudio === audio) setButton(button, 'playing'); }, { once: true });
+    audio.addEventListener('ended', () => { if (currentAudio === audio) { currentAudio = null; setButton(button, null); } }, { once: true });
+    try { audio.currentTime = 0; } catch (error) {}
+    // A rejected play() after stopAudio() is expected; fallBack ignores it because the audio is no longer current.
+    audio.play().catch(() => { clearTimeout(wait); fallBack(); });
   }
 
   function speakButton(card, large) {
@@ -256,6 +290,7 @@
     el['deck-progress-text'].textContent = (state.pos + 1) + ' / ' + total;
     el['deck-progress-bar'].style.width = Math.round((state.pos + 1) * 100 / total) + '%';
     if (state.rendered !== card || state.renderedReverse !== state.reverse) {
+      if (state.rendered !== card) preload(card);
       state.rendered = card;
       state.renderedReverse = state.reverse;
       setFace(el['card-front'], state.reverse ? meaningSide(card, true) : wordSide(card), state.flipped);

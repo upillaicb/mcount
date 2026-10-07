@@ -11,6 +11,16 @@ const DEFAULT_ADMIN_TOKEN = 'admin123';
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || (process.env.VERCEL ? null : DEFAULT_ADMIN_TOKEN);
 if (!ADMIN_TOKEN) throw new Error('ADMIN_TOKEN must be set');
 
+// Log slow API requests so delays can be traced to the server, the database, or the dictionary.
+app.use('/api', (req, res, next) => {
+  const started = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - started;
+    if (ms > 1500) console.warn(`slow request: ${req.method} ${req.originalUrl} -> ${res.statusCode} in ${ms}ms`);
+  });
+  next();
+});
+
 app.use(express.json({ limit: '2mb' }));
 app.use('/api/admin/quizzes/:id/upload', express.text({ type: '*/*', limit: '2mb' }));
 
@@ -257,8 +267,10 @@ const dictionaryCache = { get: w => db.getDictionaryCache(w), set: (w, s, r) => 
 
 // Looks a word up and stores the default selection. Never throws; failures mark the word 'error'.
 async function lookupDeckWord(deckId, row, force) {
+  const started = Date.now();
   try {
     const result = await dictionary.lookup(row.word, dictionaryCache, { force });
+    console.log(`lookup "${row.word}": ${result.status} in ${Date.now() - started}ms`);
     if (result.status === 404) {
       await db.setWordLookup(deckId, row.id, { lookupStatus: 'not_found', senses: [] });
     } else {
