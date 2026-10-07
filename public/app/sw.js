@@ -1,5 +1,5 @@
-const CACHE = 'mcount-client-v2';
-const SHELL = ['/app/', '/app/index.html', '/app/styles.css', '/app/app.js', '/app/vendor/lucide.js', '/app/manifest.webmanifest', '/app/icons/icon-192.png', '/app/icons/icon-512.png', '/app/icons/apple-touch-icon.png'];
+const CACHE = 'mcount-client-v3';
+const SHELL = ['/app/', '/app/index.html', '/app/styles.css', '/app/app.js', '/app/flashcards.js', '/app/vendor/lucide.js', '/app/manifest.webmanifest', '/app/icons/icon-192.png', '/app/icons/icon-512.png', '/app/icons/apple-touch-icon.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)));
 });

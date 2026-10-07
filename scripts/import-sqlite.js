@@ -25,7 +25,7 @@ async function main() {
     if (questions.length) await tx`INSERT INTO questions ${tx(questions, 'id', 'quiz_id', 'position', 'text', 'answer')}`;
     for (const r of runs) {
       await tx`INSERT INTO runs (id, quiz_id, name, status, randomized, question_order, created_at, published_at, completed_at)
-               VALUES (${r.id}, ${r.quiz_id}, ${r.name}, ${r.status}, ${r.randomized}, ${tx.json(r.question_order)},
+               VALUES (${r.id}, ${r.quiz_id}, ${r.name}, ${r.status}, ${r.randomized}, ${sql.json(r.question_order)},
                        ${r.created_at}, ${r.published_at}, ${r.completed_at})`;
     }
     if (participants.length) await tx`INSERT INTO participants ${tx(participants, 'id', 'run_id', 'name', 'score', 'created_at')}`;

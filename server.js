@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 const db = require('./db');
+const dictionary = require('./dictionary');
 
 const app = express();
 const PORT = process.env.PORT || 5555;
@@ -230,6 +231,174 @@ app.post('/api/admin/runs/:rid/participants/reset', requireAdmin, route(async (r
   await db.resetRunScores(req.params.rid);
   res.json({ ok: true });
 }));
+
+// ---------- Public: Flashcard decks ----------
+// Published decks only change on publish, so the CDN may cache them briefly.
+const PUBLIC_CACHE = 'public, max-age=0, s-maxage=30, stale-while-revalidate=60';
+
+app.get('/api/flashcards', route(async (req, res) => {
+  res.set('Cache-Control', PUBLIC_CACHE);
+  res.json(await db.listPublishedDecks());
+}));
+
+app.get('/api/flashcards/:id', route(async (req, res) => {
+  const deck = await db.getPublishedDeck(req.params.id);
+  if (!deck) return res.status(404).json({ error: 'deck not found' });
+  res.set('Cache-Control', PUBLIC_CACHE);
+  res.json(deck);
+}));
+
+// ---------- Admin: Flashcard decks ----------
+const LOOKUP_BATCH = 8;
+const LOOKUP_CONCURRENCY = 3;
+const dictionaryCache = { get: w => db.getDictionaryCache(w), set: (w, s, r) => db.setDictionaryCache(w, s, r) };
+
+// Looks a word up and stores the default selection. Never throws; failures mark the word 'error'.
+async function lookupDeckWord(deckId, row, force) {
+  try {
+    const result = await dictionary.lookup(row.word, dictionaryCache, { force });
+    if (result.status === 404) {
+      await db.setWordLookup(deckId, row.id, { lookupStatus: 'not_found', senses: [] });
+    } else {
+      const pick = dictionary.defaultSelection(dictionary.normalize(result.response));
+      await db.setWordLookup(deckId, row.id, { lookupStatus: pick.senses.length ? 'ready' : 'not_found', ...pick });
+    }
+  } catch (e) {
+    console.error(`lookup failed for "${row.word}":`, e.message);
+    await db.setWordLookup(deckId, row.id, { lookupStatus: 'error', senses: [] });
+  }
+}
+
+app.param('wid', (req, res, next, wid) => /^\d{1,15}$/.test(wid) ? next() : res.status(404).json({ error: 'not found' }));
+
+function parseSlug(raw) {
+  const slug = String(raw || '').trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9_-]{1,39}$/.test(slug) ? slug : null;
+}
+
+app.get('/api/admin/decks', requireAdmin, route(async (req, res) => res.json(await db.listDecks())));
+
+app.post('/api/admin/decks', requireAdmin, route(async (req, res) => {
+  const name = (req.body.name || '').trim() || 'Untitled deck';
+  res.json(await db.createDeck(name));
+}));
+
+app.get('/api/admin/decks/:id', requireAdmin, route(async (req, res) => {
+  const deck = await db.getDeck(req.params.id);
+  if (!deck) return res.status(404).json({ error: 'not found' });
+  deck.words = await db.listDeckWords(req.params.id);
+  res.json(deck);
+}));
+
+app.delete('/api/admin/decks/:id', requireAdmin, route(async (req, res) => {
+  await db.deleteDeck(req.params.id);
+  res.json({ ok: true });
+}));
+
+app.post('/api/admin/decks/:id/settings', requireAdmin, route(async (req, res) => {
+  const update = {};
+  if (req.body.name !== undefined) {
+    update.name = String(req.body.name).trim();
+    if (!update.name) return res.status(400).json({ error: 'name required' });
+  }
+  if (req.body.description !== undefined) update.description = String(req.body.description).trim().slice(0, 300);
+  if (req.body.maxSenses !== undefined) {
+    const n = parseInt(req.body.maxSenses, 10);
+    if (!(n >= 1 && n <= 10)) return res.status(400).json({ error: 'meanings per card must be 1-10' });
+    update.maxSenses = n;
+  }
+  const deck = await db.updateDeck(req.params.id, update);
+  if (!deck) return res.status(404).json({ error: 'not found' });
+  res.json(deck);
+}));
+
+app.post('/api/admin/decks/:id/slug', requireAdmin, route(async (req, res) => {
+  const slug = parseSlug(req.body.slug);
+  if (!slug) return res.status(400).json({ error: 'slug must be 2-40 chars, letters/digits/_/-, starting with letter or digit' });
+  try { res.json(await db.changeDeckSlug(req.params.id, slug)); }
+  catch (e) {
+    if (e.code === 'DUP') return res.status(409).json({ error: 'slug already in use' });
+    throw e;
+  }
+}));
+
+app.post('/api/admin/decks/:id/words', requireAdmin, route(async (req, res) => {
+  if (!(await db.getDeck(req.params.id))) return res.status(404).json({ error: 'not found' });
+  let parsed;
+  try { parsed = dictionary.parseWordList(req.body.text); }
+  catch (e) { return res.status(400).json({ error: e.message }); }
+  if (!parsed.words.length) return res.status(400).json({ error: 'no valid words found' });
+  const result = await db.addDeckWords(req.params.id, parsed.words, !!req.body.replace);
+  res.json({ ...result, invalid: parsed.invalid });
+}));
+
+// Looks up the next batch of pending words. The admin page calls this until remaining is 0.
+app.post('/api/admin/decks/:id/lookup', requireAdmin, route(async (req, res) => {
+  const rows = await db.pendingDeckWords(req.params.id, LOOKUP_BATCH);
+  for (let i = 0; i < rows.length; i += LOOKUP_CONCURRENCY) {
+    await Promise.all(rows.slice(i, i + LOOKUP_CONCURRENCY).map(row => lookupDeckWord(req.params.id, row, false)));
+  }
+  const deck = await db.getDeck(req.params.id);
+  res.json({ processed: rows.length, remaining: deck ? deck.pendingCount : 0 });
+}));
+
+app.post('/api/admin/decks/:id/retry-failed', requireAdmin, route(async (req, res) => {
+  res.json({ retried: await db.retryFailedWords(req.params.id) });
+}));
+
+// A word plus every dictionary meaning, for the admin's picker.
+app.get('/api/admin/decks/:id/words/:wid', requireAdmin, route(async (req, res) => {
+  const [deck, word] = await Promise.all([db.getDeck(req.params.id), db.getDeckWord(req.params.id, req.params.wid)]);
+  if (!deck || !word) return res.status(404).json({ error: 'not found' });
+  const cached = await db.getDictionaryCache(word.word.toLowerCase());
+  word.dictionary = cached && cached.status === 200 ? dictionary.normalize(cached.response) : null;
+  word.maxSenses = deck.maxSenses;
+  res.json(word);
+}));
+
+app.put('/api/admin/decks/:id/words/:wid', requireAdmin, route(async (req, res) => {
+  const deck = await db.getDeck(req.params.id);
+  if (!deck || !(await db.getDeckWord(req.params.id, req.params.wid))) return res.status(404).json({ error: 'not found' });
+  let senses;
+  try { senses = dictionary.cleanSenses(req.body.senses, deck.maxSenses); }
+  catch (e) { return res.status(400).json({ error: e.message }); }
+  const phonetic = String(req.body.phonetic || '').trim().slice(0, 60) || null;
+  const audioUrl = dictionary.httpsUrl(String(req.body.audioUrl || '').trim());
+  res.json(await db.updateDeckWord(req.params.id, req.params.wid, { senses, phonetic, audioUrl }));
+}));
+
+app.post('/api/admin/decks/:id/words/:wid/relookup', requireAdmin, route(async (req, res) => {
+  const word = await db.getDeckWord(req.params.id, req.params.wid);
+  if (!word) return res.status(404).json({ error: 'not found' });
+  await lookupDeckWord(req.params.id, word, true);
+  res.json(await db.getDeckWord(req.params.id, req.params.wid));
+}));
+
+app.delete('/api/admin/decks/:id/words/:wid', requireAdmin, route(async (req, res) => {
+  await db.deleteDeckWord(req.params.id, req.params.wid);
+  res.json({ ok: true });
+}));
+
+// Draft cards in the same shape as /api/flashcards/:id, for the student-view preview.
+app.get('/api/admin/decks/:id/preview', requireAdmin, route(async (req, res) => {
+  const draft = await db.draftDeckCards(req.params.id);
+  if (!draft) return res.status(404).json({ error: 'not found' });
+  res.set('Cache-Control', 'no-store');
+  res.json({ id: draft.deck.id, name: draft.deck.name, description: draft.deck.description, preview: true, problems: draft.problems, cards: draft.cards });
+}));
+
+app.post('/api/admin/decks/:id/publish', requireAdmin, route(async (req, res) => {
+  try {
+    const deck = await db.publishDeck(req.params.id);
+    if (!deck) return res.status(404).json({ error: 'not found' });
+    res.json(deck);
+  } catch (e) {
+    if (e.code === 'INVALID') return res.status(409).json({ error: e.message, problems: e.problems });
+    throw e;
+  }
+}));
+
+app.post('/api/admin/decks/:id/unpublish', requireAdmin, route(async (req, res) => res.json(await db.unpublishDeck(req.params.id))));
 
 // ---------- Static + routing ----------
 // On Vercel, public/ is served by the CDN and vercel.json handles /q/:slug and /.

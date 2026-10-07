@@ -10,9 +10,10 @@ Supabase project for the Vercel deployment.
 
 - `server.js` — Express API; exports the app for Vercel and listens when run directly
 - `db.js` — Postgres data layer (postgres.js)
+- `dictionary.js` — dictionaryapi.dev lookups and flashcard helpers
 - `supabase/migrations/` — database schema
 - `public/admin.html`, `public/quiz.html` — admin console and original participant view
-- `public/app/` — client SPA (no build step)
+- `public/app/` — client SPA (no build step); `flashcards.js` is the vocabulary flashcard view
 - `scripts/import-sqlite.js` — one-off import from the legacy `mcount.db`
 
 ## Run locally
@@ -71,10 +72,28 @@ Notes:
 - Tables have row-level security on with no policies, so the public Supabase Data API
   cannot read them. Only the server's `DATABASE_URL` connection can.
 
+## Vocabulary flashcards
+
+1. In the admin console, create a deck under **Flashcard decks** and paste or upload
+   a word list (one per line, or comma-separated; up to 300 per upload).
+2. Each word is looked up at `api.dictionaryapi.dev` in small batches, with a
+   progress bar. Responses are cached in the `dictionary_cache` table, so a word is
+   only fetched once across all decks.
+3. Click **Choose meanings** on a word to see every meaning grouped by part of
+   speech. Tick up to the deck's **Meanings per card** limit (default 3), reword
+   any meaning, or write your own (for words the dictionary doesn't have). Pick
+   a US/UK recording or the device voice for pronunciation.
+4. **Preview** opens the student view with the unpublished cards (uses the admin
+   token saved in this browser). **Publish** freezes a copy for students; later
+   edits stay invisible until you publish again.
+
+Students open `/app/#/flashcards` to see published decks and study them: flip
+cards, listen to pronunciation, mark "Got it" / "Still learning", shuffle, or
+switch to meaning-first. Progress is stored on the device only.
+
 ## Client SPA
 
-The client lists published runs only. Select Quiz for timed playback or Flashcards
-for manual question/answer study of the same published questions. Scores remain
+The client lists published runs only. Select Quiz for timed playback. Scores remain
 managed by the existing admin console. The library refreshes every 15 seconds;
 live scores refresh every 2 seconds. Playback timing is local to each device,
 as in the original player.

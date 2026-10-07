@@ -12,11 +12,16 @@
   <link rel="icon" href="/app/icons/icon-192.png">
   <link rel="stylesheet" href="/app/styles.css">
   <script defer src="/app/vendor/lucide.js"></script>
+  <script defer src="/app/flashcards.js"></script>
   <script defer src="/app/app.js"></script>
 </head>
 <body>
   <header class="app-header">
     <a class="brand" href="/app/" aria-label="MCount home"><img src="/app/icons/icon-192.png" width="40" height="40" alt="">MCount</a>
+    <nav class="app-nav" aria-label="Sections">
+      <a href="#/" data-nav="quizzes">Quizzes</a>
+      <a href="#/flashcards" data-nav="flashcards">Flashcards</a>
+    </nav>
     <span id="connection" role="status">Connecting</span>
     <button id="refresh" class="icon-button" aria-label="Refresh" title="Refresh"><i data-lucide="refresh-cw"></i></button>
   </header>
@@ -42,15 +47,61 @@
           <h2 id="question"></h2>
           <p id="answer" hidden></p>
           <div class="player-controls">
-            <button id="previous" class="icon-button" aria-label="Previous card" title="Previous card"><i data-lucide="chevron-left"></i></button>
             <button id="start" class="primary">Start quiz</button>
             <button id="pause" class="icon-button" aria-label="Pause" title="Pause"><i data-lucide="pause"></i></button>
-            <button id="reveal" class="primary">Reveal answer</button>
-            <button id="next" class="icon-button" aria-label="Next card" title="Next card"><i data-lucide="chevron-right"></i></button>
           </div>
         </div>
         <aside id="scores" hidden><h2>Scores</h2><ol id="score-list"></ol></aside>
       </div>
+    </section>
+    <section id="decks-view" hidden>
+      <div class="section-heading"><div><p class="eyebrow">Word power</p><h1>Flashcards</h1></div><span id="decks-count"></span></div>
+      <p id="decks-message" role="status">Loading flashcards...</p>
+      <div id="decks" class="catalog"></div>
+    </section>
+    <section id="deck-view" hidden>
+      <div id="preview-banner" class="preview-banner" hidden>Preview: students can't see this version until you publish.</div>
+      <div class="player-heading">
+        <button id="deck-back" class="icon-button" aria-label="Back to flashcards" title="Back to flashcards"><i data-lucide="arrow-left"></i></button>
+        <div><p class="eyebrow">Flashcards</p><h1 id="deck-title"></h1></div>
+        <span id="deck-progress-text"></span>
+      </div>
+      <div class="deck-progress" aria-hidden="true"><div id="deck-progress-bar"></div></div>
+      <p id="deck-message" role="status"></p>
+      <div id="deck-study">
+        <div class="deck-options">
+          <button id="deck-shuffle" class="chip-toggle" aria-pressed="false"><i data-lucide="shuffle"></i><span>Shuffle</span></button>
+          <button id="deck-reverse" class="chip-toggle" aria-pressed="false"><i data-lucide="repeat"></i><span>Meaning first</span></button>
+        </div>
+        <div class="card-stage">
+          <div id="flashcard" class="flashcard" aria-live="polite">
+            <div class="card-inner">
+              <div id="card-front" class="card-face card-front"></div>
+              <div id="card-back" class="card-face card-back"></div>
+            </div>
+          </div>
+        </div>
+        <div class="card-controls">
+          <button id="card-prev" class="icon-button" aria-label="Previous card" title="Previous card"><i data-lucide="chevron-left"></i></button>
+          <button id="card-flip" class="primary flip-button"><i data-lucide="rotate-cw"></i><span>Flip card</span></button>
+          <button id="card-next" class="icon-button" aria-label="Next card" title="Next card"><i data-lucide="chevron-right"></i></button>
+        </div>
+        <div id="card-grade" class="card-grade" hidden>
+          <button id="card-learning" class="grade learning"><i data-lucide="rotate-ccw"></i><span>Still learning</span></button>
+          <button id="card-known" class="grade known"><i data-lucide="check"></i><span>Got it!</span></button>
+        </div>
+      </div>
+      <div id="deck-summary" class="deck-summary" hidden>
+        <p class="summary-emoji" aria-hidden="true">🎉</p>
+        <h2 id="summary-title"></h2>
+        <p id="summary-text"></p>
+        <div class="summary-actions">
+          <button id="summary-review" class="primary"><i data-lucide="rotate-ccw"></i><span id="summary-review-label">Review</span></button>
+          <button id="summary-restart"><i data-lucide="refresh-cw"></i><span>Start over</span></button>
+          <button id="summary-back"><i data-lucide="layers"></i><span>All flashcards</span></button>
+        </div>
+      </div>
+      <p class="attribution">Definitions from <a href="https://en.wiktionary.org/" target="_blank" rel="noopener">Wiktionary</a> via dictionaryapi.dev, <a href="https://creativecommons.org/licenses/by-sa/3.0/" target="_blank" rel="noopener">CC BY-SA</a>.</p>
     </section>
   </main>
 </body>

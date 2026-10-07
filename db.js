@@ -289,6 +289,222 @@ async function resetRunScores(runId) {
   await sql`UPDATE participants SET score=0 WHERE run_id=${runId}`;
 }
 
+// ---------- Flashcard decks ----------
+function mapDeck(r) {
+  if (!r) return null;
+  return {
+    id: r.id, name: r.name, description: r.description,
+    maxSenses: r.max_senses,
+    status: r.status,
+    createdAt: r.created_at, updatedAt: r.updated_at, publishedAt: r.published_at,
+    // A published deck whose draft was edited after publishing.
+    hasUnpublishedChanges: r.status === 'published' && r.updated_at > r.published_at,
+    publishedCardCount: Array.isArray(r.published_cards) ? r.published_cards.length : 0,
+    wordCount: r.word_count,
+    pendingCount: r.pending_count
+  };
+}
+
+function selectDecks(where) {
+  return sql`
+    SELECT d.*,
+      (SELECT COUNT(*) FROM deck_words WHERE deck_id = d.id) AS word_count,
+      (SELECT COUNT(*) FROM deck_words WHERE deck_id = d.id AND lookup_status = 'pending') AS pending_count
+    FROM decks d ${where} ORDER BY d.created_at DESC`;
+}
+
+async function listDecks() {
+  return (await selectDecks(sql``)).map(mapDeck);
+}
+
+async function getDeck(id) {
+  const [r] = await selectDecks(sql`WHERE d.id = ${id}`);
+  return mapDeck(r);
+}
+
+async function createDeck(name) {
+  const id = newId();
+  const t = now();
+  await sql`INSERT INTO decks (id, name, created_at, updated_at) VALUES (${id}, ${name || 'Untitled deck'}, ${t}, ${t})`;
+  return getDeck(id);
+}
+
+async function updateDeck(id, { name, description, maxSenses }) {
+  await sql`
+    UPDATE decks SET
+      name = COALESCE(${name ?? null}, name),
+      description = COALESCE(${description ?? null}, description),
+      max_senses = COALESCE(${maxSenses ?? null}::int, max_senses)
+    WHERE id = ${id}`;
+  return getDeck(id);
+}
+
+// deck_words.deck_id cascades on update.
+async function changeDeckSlug(id, newSlug) {
+  const dup = () => { const err = new Error('slug already in use'); err.code = 'DUP'; return err; };
+  const [exists] = await sql`SELECT 1 FROM decks WHERE id=${newSlug}`;
+  if (exists) throw dup();
+  try {
+    await sql`UPDATE decks SET id=${newSlug} WHERE id=${id}`;
+  } catch (e) {
+    if (e.code === '23505') throw dup();
+    throw e;
+  }
+  return getDeck(newSlug);
+}
+
+async function deleteDeck(id) {
+  await sql`DELETE FROM decks WHERE id=${id}`;
+}
+
+function touchDeck(tx, deckId) {
+  return tx`UPDATE decks SET updated_at=${now()} WHERE id=${deckId}`;
+}
+
+function mapWord(r) {
+  return {
+    id: r.id, word: r.word, position: r.position,
+    lookupStatus: r.lookup_status,
+    phonetic: r.phonetic, audioUrl: r.audio_url,
+    senses: r.senses || []
+  };
+}
+
+async function listDeckWords(deckId) {
+  return (await sql`SELECT * FROM deck_words WHERE deck_id=${deckId} ORDER BY position`).map(mapWord);
+}
+
+async function getDeckWord(deckId, wordId) {
+  const [r] = await sql`SELECT * FROM deck_words WHERE deck_id=${deckId} AND id=${wordId}`;
+  return r ? mapWord(r) : null;
+}
+
+// Adds words as pending. Existing words (case-insensitive) are skipped unless replace is set.
+async function addDeckWords(deckId, words, replace) {
+  return sql.begin(async tx => {
+    if (replace) await tx`DELETE FROM deck_words WHERE deck_id=${deckId}`;
+    const [{ m }] = await tx`SELECT COALESCE(MAX(position), -1) AS m FROM deck_words WHERE deck_id=${deckId}`;
+    const rows = words.map((word, i) => ({ deck_id: deckId, position: m + 1 + i, word }));
+    const inserted = rows.length
+      ? await tx`INSERT INTO deck_words ${tx(rows, 'deck_id', 'position', 'word')}
+                 ON CONFLICT (deck_id, lower(word)) DO NOTHING RETURNING id`
+      : [];
+    await tx`
+      UPDATE deck_words w SET position = r.rn - 1
+      FROM (SELECT id, row_number() OVER (ORDER BY position) AS rn FROM deck_words WHERE deck_id=${deckId}) r
+      WHERE w.id = r.id`;
+    await touchDeck(tx, deckId);
+    return { added: inserted.length, skipped: words.length - inserted.length };
+  });
+}
+
+function pendingDeckWords(deckId, limit) {
+  return sql`SELECT id, word FROM deck_words WHERE deck_id=${deckId} AND lookup_status='pending' ORDER BY position LIMIT ${limit}`;
+}
+
+async function setWordLookup(deckId, wordId, { lookupStatus, phonetic, audioUrl, senses }) {
+  await sql.begin(async tx => {
+    await tx`
+      UPDATE deck_words SET lookup_status=${lookupStatus}, phonetic=${phonetic ?? null},
+        audio_url=${audioUrl ?? null}, senses=${sql.json(senses || [])}
+      WHERE deck_id=${deckId} AND id=${wordId}`;
+    await touchDeck(tx, deckId);
+  });
+}
+
+async function updateDeckWord(deckId, wordId, { senses, phonetic, audioUrl }) {
+  await sql.begin(async tx => {
+    await tx`
+      UPDATE deck_words SET senses=${sql.json(senses)}, phonetic=${phonetic ?? null}, audio_url=${audioUrl ?? null}
+      WHERE deck_id=${deckId} AND id=${wordId}`;
+    await touchDeck(tx, deckId);
+  });
+  return getDeckWord(deckId, wordId);
+}
+
+async function retryFailedWords(deckId) {
+  const rows = await sql`UPDATE deck_words SET lookup_status='pending' WHERE deck_id=${deckId} AND lookup_status='error' RETURNING id`;
+  return rows.length;
+}
+
+async function deleteDeckWord(deckId, wordId) {
+  await sql.begin(async tx => {
+    await tx`DELETE FROM deck_words WHERE deck_id=${deckId} AND id=${wordId}`;
+    await tx`
+      UPDATE deck_words w SET position = r.rn - 1
+      FROM (SELECT id, row_number() OVER (ORDER BY position) AS rn FROM deck_words WHERE deck_id=${deckId}) r
+      WHERE w.id = r.id`;
+    await touchDeck(tx, deckId);
+  });
+}
+
+async function getDictionaryCache(word) {
+  const [r] = await sql`SELECT http_status, response FROM dictionary_cache WHERE word=${word}`;
+  return r ? { status: r.http_status, response: r.response } : null;
+}
+
+async function setDictionaryCache(word, status, response) {
+  await sql`
+    INSERT INTO dictionary_cache (word, http_status, response, fetched_at)
+    VALUES (${word}, ${status}, ${response === null ? null : sql.json(response)}, ${now()})
+    ON CONFLICT (word) DO UPDATE SET http_status=EXCLUDED.http_status, response=EXCLUDED.response, fetched_at=EXCLUDED.fetched_at`;
+}
+
+// Student-facing card; drops admin-only fields.
+function toCard(w) {
+  return {
+    word: w.word, phonetic: w.phonetic, audioUrl: w.audioUrl,
+    senses: w.senses.map(s => ({ partOfSpeech: s.partOfSpeech, definition: s.definition, example: s.example || '', synonyms: s.synonyms || [] }))
+  };
+}
+
+// Cards as students would see them now, plus reasons the deck can't be published yet.
+async function draftDeckCards(deckId) {
+  const deck = await getDeck(deckId);
+  if (!deck) return null;
+  const words = await listDeckWords(deckId);
+  const problems = [];
+  const pending = words.filter(w => w.lookupStatus === 'pending');
+  const empty = words.filter(w => w.lookupStatus !== 'pending' && !w.senses.length);
+  const tooMany = words.filter(w => w.senses.length > deck.maxSenses);
+  if (!words.length) problems.push('Add at least one word.');
+  if (pending.length) problems.push(`${pending.length} word(s) are still being looked up.`);
+  if (empty.length) problems.push('No meaning chosen for: ' + empty.map(w => w.word).join(', '));
+  if (tooMany.length) problems.push(`More than ${deck.maxSenses} meaning(s) chosen for: ` + tooMany.map(w => w.word).join(', '));
+  const cards = words.filter(w => w.senses.length).map(toCard);
+  return { deck, cards, problems };
+}
+
+async function publishDeck(deckId) {
+  const draft = await draftDeckCards(deckId);
+  if (!draft) return null;
+  if (draft.problems.length) {
+    const err = new Error(draft.problems.join(' ')); err.code = 'INVALID'; err.problems = draft.problems; throw err;
+  }
+  const t = now();
+  // published_at is set past updated_at so the deck reads as up to date.
+  await sql`UPDATE decks SET status='published', published_cards=${sql.json(draft.cards)},
+            published_at=GREATEST(${t}, updated_at) WHERE id=${deckId}`;
+  return getDeck(deckId);
+}
+
+async function unpublishDeck(deckId) {
+  await sql`UPDATE decks SET status='draft' WHERE id=${deckId}`;
+  return getDeck(deckId);
+}
+
+async function listPublishedDecks() {
+  const rows = await sql`
+    SELECT id, name, description, published_at, jsonb_array_length(published_cards) AS card_count
+    FROM decks WHERE status='published' ORDER BY published_at DESC`;
+  return rows.map(r => ({ id: r.id, name: r.name, description: r.description, cardCount: r.card_count, publishedAt: r.published_at }));
+}
+
+async function getPublishedDeck(id) {
+  const [r] = await sql`SELECT id, name, description, published_at, published_cards FROM decks WHERE id=${id} AND status='published'`;
+  return r ? { id: r.id, name: r.name, description: r.description, publishedAt: r.published_at, cards: r.published_cards || [] } : null;
+}
+
 module.exports = {
   sql, newId,
   listQuizzes, getQuiz, createQuiz, renameQuiz, setQuizDuration, setQuizAnswerDuration,
@@ -297,5 +513,9 @@ module.exports = {
   listRuns, getRun, createRun, renameRun, reshuffleRun, resetRunOrder,
   publishRun, unpublishRun, completeRun, deleteRun,
   getActiveRunForQuiz, getRunQuestions, listCatalog,
-  listParticipants, addParticipant, deleteParticipant, scoreParticipant, resetRunScores
+  listParticipants, addParticipant, deleteParticipant, scoreParticipant, resetRunScores,
+  listDecks, getDeck, createDeck, updateDeck, changeDeckSlug, deleteDeck,
+  listDeckWords, getDeckWord, addDeckWords, pendingDeckWords, setWordLookup, updateDeckWord,
+  retryFailedWords, deleteDeckWord, getDictionaryCache, setDictionaryCache,
+  draftDeckCards, publishDeck, unpublishDeck, listPublishedDecks, getPublishedDeck
 };

@@ -12,6 +12,7 @@ test('client catalog and assets are additive to existing routes', async context 
   const questions = [{ id: 1, text: '2 + 2?', answer: '4' }];
   let quizzes = [quiz, { id: 'draft', name: 'Draft quiz', activeRunId: null }];
   let activeRun = run;
+  const card = { word: 'bank', phonetic: '/bæŋk/', audioUrl: null, senses: [{ partOfSpeech: 'noun', definition: 'A place for money.', example: '', synonyms: [] }] };
   const fixture = {
     listCatalog: async () => quizzes.filter(q => q.activeRunId).map(q => ({
       id: q.id, name: q.name, runId: activeRun.id, runName: activeRun.name,
@@ -21,7 +22,9 @@ test('client catalog and assets are additive to existing routes', async context 
     getQuiz: id => id === quiz.id ? quiz : null,
     getActiveRunForQuiz: () => activeRun,
     getRunQuestions: () => questions,
-    listParticipants: () => []
+    listParticipants: () => [],
+    listPublishedDecks: async () => [{ id: 'words', name: 'Week 1', description: '', cardCount: 1, publishedAt: 1 }],
+    getPublishedDeck: async id => id === 'words' ? { id, name: 'Week 1', description: '', publishedAt: 1, cards: [card] } : null
   };
   let application;
   const filename = path.join(__dirname, '..', 'server.js');
@@ -35,7 +38,7 @@ test('client catalog and assets are additive to existing routes', async context 
       application.listen = () => {};
       return application;
     }, express);
-    return require(name);
+    return require(name.startsWith('./') ? path.join(__dirname, '..', name) : name);
   };
   isolated._compile(fs.readFileSync(filename, 'utf8'), filename);
   const server = http.createServer(application);
@@ -68,7 +71,17 @@ test('client catalog and assets are additive to existing routes', async context 
   assert.deepEqual(inactive.questions, []);
   assert.equal((await fetch(base + '/api/current/missing')).status, 404);
 
-  for (const asset of ['/app/', '/app/app.js', '/app/styles.css', '/app/sw.js', '/app/vendor/lucide.js']) {
+  const decks = await fetch(base + '/api/flashcards');
+  assert.equal(decks.status, 200);
+  assert.match(decks.headers.get('cache-control'), /s-maxage=30/);
+  assert.equal((await decks.json())[0].id, 'words');
+  assert.deepEqual((await (await fetch(base + '/api/flashcards/words')).json()).cards, [card]);
+  assert.equal((await fetch(base + '/api/flashcards/missing')).status, 404);
+  assert.equal((await fetch(base + '/api/admin/decks')).status, 401);
+  assert.equal((await fetch(base + '/api/admin/decks/words/preview')).status, 401);
+  assert.equal((await fetch(base + '/api/admin/decks/words/words/abc', { headers: { 'X-Admin-Token': 'admin123' } })).status, 404);
+
+  for (const asset of ['/app/', '/app/app.js', '/app/flashcards.js', '/app/styles.css', '/app/sw.js', '/app/vendor/lucide.js']) {
     assert.equal((await fetch(base + asset)).status, 200, asset);
   }
   const manifest = await (await fetch(base + '/app/manifest.webmanifest')).json();

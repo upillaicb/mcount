@@ -3,6 +3,7 @@
   const elements = {};
   document.querySelectorAll('[id]').forEach(element => { elements[element.id] = element; });
   let session = null;
+  let view = 'catalog';
   let catalogRequest = 0;
   let playerRequest = 0;
   let catalogSignature = '';
@@ -124,15 +125,13 @@
         count.textContent = quiz.questionCount + ' questions';
         const actions = document.createElement('div');
         actions.className = 'quiz-actions';
-        [['quiz', 'Quiz', 'play'], ['cards', 'Flashcards', 'layers']].forEach(mode => {
-          const button = document.createElement('button');
-          if (mode[0] === 'quiz') button.className = 'primary';
-          button.innerHTML = '<i data-lucide="' + mode[2] + '"></i><span>' + mode[1] + '</span>';
-          button.setAttribute('aria-label', mode[1] + ': ' + quiz.name);
-          button.disabled = quiz.questionCount === 0;
-          button.addEventListener('click', () => { location.hash = '/' + mode[0] + '/' + encodeURIComponent(quiz.id); });
-          actions.appendChild(button);
-        });
+        const button = document.createElement('button');
+        button.className = 'primary';
+        button.innerHTML = '<i data-lucide="play"></i><span>Quiz</span>';
+        button.setAttribute('aria-label', 'Quiz: ' + quiz.name);
+        button.disabled = quiz.questionCount === 0;
+        button.addEventListener('click', () => { location.hash = '/quiz/' + encodeURIComponent(quiz.id); });
+        actions.appendChild(button);
         item.append(title, run, count, actions);
         elements.catalog.appendChild(item);
       });
@@ -153,8 +152,6 @@
     session.started = null;
     session.paused = null;
     session.offset = 0;
-    session.card = 0;
-    session.revealed = false;
     session.frame = '';
     lastBeep = '';
   }
@@ -227,11 +224,9 @@
     let winner = false;
     let meta = '';
     if (quiz) {
-      const cards = session.mode === 'cards';
-      let index = session.card;
-      answering = session.revealed;
-      ready = !cards && session.started === null;
-      if (!cards && !ready) {
+      let index = 0;
+      ready = session.started === null;
+      if (!ready) {
         const elapsed = ((session.paused === null ? Date.now() : session.paused) - session.started - session.offset) / 1000;
         const cycle = quiz.durationSeconds + quiz.answerSeconds;
         index = Math.floor(elapsed / cycle);
@@ -258,27 +253,21 @@
           }
         }
       } else {
-        question = !cards && answering ? '' : quiz.questions[index].text;
+        question = answering ? '' : quiz.questions[index].text;
         answer = answering ? quiz.questions[index].answer || '(no answer provided)' : '';
-        phase = answering ? 'Answer' : cards ? 'Flashcard' : 'Question';
+        phase = answering ? 'Answer' : 'Question';
         progress = (index + 1) + ' / ' + quiz.questions.length;
         meta = quiz.name + ' · ' + progress;
       }
-      frame = [session.mode, index, answering, ready, finished, session.paused !== null, question, answer, phase].join('|');
-      show(elements.start, !cards && (ready || finished));
+      frame = [index, answering, ready, finished, session.paused !== null, question, answer, phase].join('|');
+      show(elements.start, ready || finished);
       elements.start.textContent = finished ? 'Play again' : 'Start quiz';
-      show(elements.pause, !cards && !ready && !finished);
-      show(elements.previous, cards);
-      show(elements.next, cards);
-      show(elements.reveal, cards);
-      elements.previous.disabled = index === 0;
-      elements.next.disabled = index >= quiz.questions.length - 1;
-      elements.reveal.textContent = session.revealed ? 'Hide answer' : 'Reveal answer';
+      show(elements.pause, !ready && !finished);
     } else {
-      ['start', 'pause', 'previous', 'next', 'reveal'].forEach(id => show(elements[id], false));
+      ['start', 'pause'].forEach(id => show(elements[id], false));
     }
     elements['quiz-meta'].textContent = meta;
-    show(elements['paused-badge'], session.mode === 'quiz' && session.paused !== null && !finished);
+    show(elements['paused-badge'], session.paused !== null && !finished);
     elements['player-view'].classList.toggle('answer-phase', answering && !finished);
     if (winner) celebrate();
     elements.timer.textContent = remaining;
@@ -306,25 +295,38 @@
   }
 
   function route() {
-    const match = location.hash.match(/^#\/(quiz|cards)\/([^/]+)$/);
+    const match = location.hash.match(/^#\/quiz\/([^/]+)$/);
+    const deckMatch = location.hash.match(/^#\/flashcards(?:\/([^/]+)(\/preview)?)?\/?$/);
     playerRequest++;
     catalogRequest++;
     stopCelebration();
     session = null;
-    document.body.classList.toggle('quiz-mode', !!match && match[1] === 'quiz');
-    show(elements['catalog-view'], !match);
-    show(elements['player-view'], !!match);
-    if (!match) {
+    view = deckMatch ? 'flashcards' : match ? 'player' : 'catalog';
+    document.body.classList.toggle('quiz-mode', !!match);
+    show(elements['catalog-view'], view === 'catalog');
+    show(elements['player-view'], view === 'player');
+    document.querySelectorAll('.app-nav a').forEach(link => {
+      if (link.dataset.nav === (deckMatch ? 'flashcards' : 'quizzes')) link.setAttribute('aria-current', 'page');
+      else link.removeAttribute('aria-current');
+    });
+    if (deckMatch) {
+      let id = null;
+      try { id = deckMatch[1] ? decodeURIComponent(deckMatch[1]) : null; } catch (error) { location.hash = '/flashcards'; return; }
+      window.MCountFlashcards.show(id, !!deckMatch[2]);
+    } else {
+      window.MCountFlashcards.hide();
+    }
+    if (view === 'catalog') {
       elements['catalog-message'].textContent = catalogLoaded ? '' : 'Loading active quizzes...';
       loadCatalog();
-    } else {
+    } else if (view === 'player') {
       let id;
-      try { id = decodeURIComponent(match[2]); } catch (error) { location.hash = ''; return; }
-      session = { id: id, mode: match[1], data: null };
+      try { id = decodeURIComponent(match[1]); } catch (error) { location.hash = ''; return; }
+      session = { id: id, data: null };
       resetPlayer();
       elements['quiz-title'].textContent = 'Loading...';
       elements['run-name'].textContent = '';
-      elements['mode-label'].textContent = match[1] === 'cards' ? 'Flashcards' : 'Timed quiz';
+      elements['mode-label'].textContent = 'Timed quiz';
       elements['player-message'].textContent = '';
       renderScores([]);
       renderPlayer();
@@ -333,8 +335,12 @@
     elements.main.focus();
   }
 
-  function refresh() { if (session) loadPlayer(); else loadCatalog(); }
-  elements.refresh.addEventListener('click', refresh);
+  function refresh(manual) {
+    if (view === 'flashcards') window.MCountFlashcards.refresh(manual === true);
+    else if (session) loadPlayer();
+    else loadCatalog();
+  }
+  elements.refresh.addEventListener('click', () => refresh(true));
   elements.back.addEventListener('click', () => { location.hash = ''; });
   elements.start.addEventListener('click', () => {
     if (!session || !session.data) return;
@@ -353,14 +359,11 @@
     else { session.offset += Date.now() - session.paused; session.paused = null; }
     renderPlayer();
   });
-  elements.reveal.addEventListener('click', () => { session.revealed = !session.revealed; renderPlayer(); });
-  elements.previous.addEventListener('click', () => { session.card = Math.max(0, session.card - 1); session.revealed = false; renderPlayer(); });
-  elements.next.addEventListener('click', () => { session.card = Math.min(session.data.questions.length - 1, session.card + 1); session.revealed = false; renderPlayer(); });
-
   document.addEventListener('keydown', event => {
     if ((event.key === 'Escape' || event.keyCode === 461) && session) {
       event.preventDefault(); location.hash = ''; return;
     }
+    if (view === 'flashcards' && window.MCountFlashcards.handleKey(event)) return;
     if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].indexOf(event.key) === -1) return;
     const controls = Array.from(document.querySelectorAll('button:not(:disabled), a')).filter(element => element.getClientRects().length);
     const active = document.activeElement;
@@ -382,8 +385,10 @@
   window.addEventListener('offline', () => { connection('Disconnected'); });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); renderPlayer(); } });
   setInterval(() => { if (!document.hidden && session) loadPlayer(); }, 2000);
-  setInterval(() => { if (!document.hidden && !session) loadCatalog(); }, 15000);
+  setInterval(() => { if (!document.hidden && view === 'catalog') loadCatalog(); }, 15000);
+  setInterval(() => { if (!document.hidden && view === 'flashcards') window.MCountFlashcards.refresh(false); }, 30000);
   setInterval(renderPlayer, 100);
+  window.MCountFlashcards.init({ elements: elements, request: request, connection: connection, icons: icons, show: show });
   icons();
   route();
   if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('/app/sw.js').catch(() => {});
