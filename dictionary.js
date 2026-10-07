@@ -58,6 +58,46 @@ async function fetchEntry(word, { timeoutMs = 10000, fetchImpl = fetch } = {}) {
   }
 }
 
+// Recordings are only downloaded from the dictionary's own hosts.
+const AUDIO_HOSTS = ['api.dictionaryapi.dev', 'ssl.gstatic.com'];
+const MAX_AUDIO_BYTES = 1024 * 1024;
+
+function isAllowedAudioUrl(url) {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' && AUDIO_HOSTS.includes(u.hostname);
+  } catch (e) {
+    return false;
+  }
+}
+
+// Downloads a recording. Returns { contentType, data: Buffer }.
+async function fetchAudio(url, { timeoutMs = 20000, fetchImpl = fetch } = {}) {
+  if (!isAllowedAudioUrl(url)) throw lookupError('Recording is not from the dictionary site', false);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetchImpl(url, { signal: controller.signal });
+    if (!res.ok) throw lookupError(`Recording download failed (${res.status})`, res.status === 429 || res.status >= 500);
+    let contentType = String(res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    if (!contentType.startsWith('audio/')) {
+      if (/\.mp3$/i.test(new URL(url).pathname)) contentType = 'audio/mpeg';
+      else throw lookupError('Recording is not an audio file', false);
+    }
+    const data = Buffer.from(await res.arrayBuffer());
+    if (!data.length) throw lookupError('Recording is empty', false);
+    if (data.length > MAX_AUDIO_BYTES) throw lookupError('Recording is too large', false);
+    return { contentType, data };
+  } catch (e) {
+    if (e.name === 'AbortError') throw lookupError(`Recording did not download within ${timeoutMs / 1000}s`, true);
+    if (e.retryable !== undefined) throw e;
+    const cause = e.cause && (e.cause.code || e.cause.message);
+    throw lookupError('Could not download the recording' + (cause ? ` (${cause})` : ''), true);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // Uses the cache ({ get(word), set(word, status, response) }) unless force is set.
@@ -160,4 +200,7 @@ function cleanSenses(senses, maxSenses) {
   });
 }
 
-module.exports = { parseWordList, fetchEntry, lookup, normalize, defaultSelection, cleanSenses, httpsUrl };
+module.exports = {
+  parseWordList, fetchEntry, lookup, normalize, defaultSelection, cleanSenses, httpsUrl,
+  isAllowedAudioUrl, fetchAudio
+};

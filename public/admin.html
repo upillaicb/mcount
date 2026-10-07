@@ -177,7 +177,7 @@
       <input id="pkPhonetic" placeholder="/fəˈnɛtɪk/" style="width:12rem" title="Phonetic spelling" />
       <span id="pkStatus"></span>
     </div>
-    <h3 style="margin-bottom:.3rem">Pronunciation</h3>
+    <h3 style="margin-bottom:.3rem">Pronunciation <small id="pkAudioStatus" class="muted" style="font-weight:400"></small></h3>
     <div id="pkAudio" class="row"></div>
 
     <h3 style="margin-bottom:.3rem">On the card <span id="pkCount" class="muted"></span></h3>
@@ -657,6 +657,13 @@
         ? '<span class="badge pub">Published</span> <span class="badge changes">Changes not published</span>'
         : '<span class="badge pub">Published</span>';
     }
+    // Students only hear stored recordings; anything else falls back to the device voice.
+    function audioLabel(w) {
+      if (!w.audioUrl) return '🗣 device voice';
+      if (w.audioId) return '🔊 recording saved';
+      if (w.audioError) return '🔇 ' + escapeHtml(w.audioError) + ' (device voice used)';
+      return '⏳ saving recording…';
+    }
     function posChip(pos) { return `<span class="pos">${escapeHtml(pos)}</span>`; }
 
     async function loadDecks() {
@@ -710,7 +717,7 @@
       try {
         const d = await api('/api/admin/decks/' + currentDeckId, { silent: true });
         renderDeck(d);
-        if (d.pendingCount && !lookupRunning) runLookups();
+        if ((d.pendingCount || d.pendingAudioCount) && !lookupRunning) runLookups();
       } catch (e) {}
     }
 
@@ -718,6 +725,7 @@
       const p = [];
       if (!d.words.length) p.push('Add at least one word.');
       if (d.pendingCount) p.push(`${d.pendingCount} word(s) are still being looked up.`);
+      if (d.pendingAudioCount) p.push(`${d.pendingAudioCount} recording(s) are still being saved.`);
       const empty = d.words.filter(w => w.lookupStatus !== 'pending' && !w.senses.length).map(w => w.word);
       if (empty.length) p.push('No meaning chosen for: ' + empty.join(', ') + '. Write your own meaning or remove them.');
       const many = d.words.filter(w => w.senses.length > d.maxSenses).map(w => w.word);
@@ -739,8 +747,10 @@
 
       const done = d.wordCount - d.pendingCount;
       document.getElementById('lookupBar').style.width = (d.wordCount ? Math.round(done * 100 / d.wordCount) : 0) + '%';
-      document.getElementById('lookupText').textContent = d.wordCount
-        ? (d.pendingCount ? `Looking up… ${done} of ${d.wordCount}` : `All ${d.wordCount} looked up`) : '';
+      document.getElementById('lookupText').textContent = !d.wordCount ? ''
+        : d.pendingCount ? `Looking up… ${done} of ${d.wordCount}`
+        : d.pendingAudioCount ? `Saving recordings… ${d.pendingAudioCount} left`
+        : `All ${d.wordCount} looked up`;
 
       const labels = { pending: 'Looking up', ready: 'Ready', not_found: 'Not in dictionary', error: 'Lookup failed' };
       const tbody = document.getElementById('wtable');
@@ -755,7 +765,8 @@
           : '<span class="muted">—</span>';
         tr.innerHTML = `
           <td class="muted">${w.position + 1}</td>
-          <td><b>${escapeHtml(w.word)}</b>${w.phonetic ? `<br><small class="muted">${escapeHtml(w.phonetic)}</small>` : ''}</td>
+          <td><b>${escapeHtml(w.word)}</b>${w.phonetic ? `<br><small class="muted">${escapeHtml(w.phonetic)}</small>` : ''}
+              <br><small class="${w.audioError ? 'danger' : 'muted'}">${audioLabel(w)}</small></td>
           <td>${w.lookupStatus === 'not_found' && w.senses.length
                 ? '<span class="badge ready">Your meaning</span>'
                 : `<span class="badge ${w.lookupStatus}">${labels[w.lookupStatus]}</span>`}
@@ -892,7 +903,8 @@
       document.getElementById('picker').showModal();
     }
 
-    function playAudio(url) {
+    function playAudio(url, local) {
+      if (url && local) { new Audio(url).play().catch(() => alert('Could not play this recording.')); return; }
       if (url) {
         const audio = new Audio(url);
         let started = false;
@@ -902,7 +914,7 @@
         setTimeout(() => {
           if (started) return;
           audio.pause();
-          alert('This recording is very slow to load from the dictionary site. Students will hear the device voice instead if it does not start within a few seconds. Choose "Device voice" to always use it.');
+          alert('This recording is slow to load from the dictionary site. That only affects this preview: once you save, the app stores its own copy for students.');
         }, 4000);
         return;
       }
@@ -922,13 +934,17 @@
       if (picker.audioUrl && !audio.some(a => a.url === picker.audioUrl)) audio.push({ url: picker.audioUrl, accent: 'Saved' });
       const pa = document.getElementById('pkAudio');
       pa.innerHTML = '';
+      document.getElementById('pkAudioStatus').innerHTML = picker.audioUrl === (w.audioUrl || '') ? audioLabel(w)
+        : picker.audioUrl ? '⏳ will be saved when you click Save' : '🗣 device voice';
       audio.concat([{ url: '', accent: 'Device voice', text: 'no recording' }]).forEach(a => {
         const label = document.createElement('label');
         label.className = 'row'; label.style.margin = '0 1rem 0 0';
         label.innerHTML = `<input type="radio" name="pkAudio" ${picker.audioUrl === a.url ? 'checked' : ''}> ${escapeHtml(a.accent)}${a.text ? ` <small class="muted">${escapeHtml(a.text)}</small>` : ''}`;
-        label.querySelector('input').onchange = () => { picker.audioUrl = a.url; };
+        label.querySelector('input').onchange = () => { picker.audioUrl = a.url; renderPicker(); };
         const play = document.createElement('button'); play.type = 'button'; play.textContent = '▶'; play.title = 'Play';
-        play.onclick = (ev) => { ev.preventDefault(); playAudio(a.url); };
+        // The saved copy plays instantly; other choices stream from the (slow) dictionary site.
+        const saved = a.url && a.url === w.audioUrl && w.audioId ? '/api/audio/' + w.audioId : null;
+        play.onclick = (ev) => { ev.preventDefault(); playAudio(saved || a.url, !!saved); };
         label.appendChild(play);
         pa.appendChild(label);
       });
@@ -1008,8 +1024,9 @@
 
     async function saveWord() {
       const senses = picker.chosen.map(s => ({ ...s, definition: s.definition.trim() })).filter(s => s.definition);
+      // Saving may download a newly chosen recording, so allow extra time.
       const saved = await busy('pkSave', 'Saving…', () =>
-        api(`/api/admin/decks/${currentDeckId}/words/${picker.word.id}`, { method: 'PUT', timeoutMs: 20000, body: {
+        api(`/api/admin/decks/${currentDeckId}/words/${picker.word.id}`, { method: 'PUT', timeoutMs: 45000, body: {
           senses, phonetic: document.getElementById('pkPhonetic').value.trim(), audioUrl: picker.audioUrl
         } }).then(() => true, () => false));
       if (!saved) return;

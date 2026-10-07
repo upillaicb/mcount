@@ -124,6 +124,31 @@ test('lookup retries transient failures and reports why it failed', async () => 
   assert.equal(serverErrors, 1, 'non-transient errors are not retried');
 });
 
+test('fetchAudio only downloads dictionary recordings and validates them', async () => {
+  const mp3 = 'https://api.dictionaryapi.dev/media/pronunciations/en/bank-us.mp3';
+  assert.equal(dictionary.isAllowedAudioUrl(mp3), true);
+  assert.equal(dictionary.isAllowedAudioUrl('https://ssl.gstatic.com/dictionary/static/sounds/bank-au.mp3'), true);
+  assert.equal(dictionary.isAllowedAudioUrl('https://evil.example/bank.mp3'), false);
+  assert.equal(dictionary.isAllowedAudioUrl('http://api.dictionaryapi.dev/x.mp3'), false);
+  assert.equal(dictionary.isAllowedAudioUrl('not a url'), false);
+
+  const reply = (status, type, bytes) => async () => ({
+    ok: status < 400, status, headers: { get: () => type }, arrayBuffer: async () => new Uint8Array(bytes).buffer
+  });
+  const file = await dictionary.fetchAudio(mp3, { fetchImpl: reply(200, 'audio/mpeg; charset=binary', [1, 2, 3]) });
+  assert.equal(file.contentType, 'audio/mpeg');
+  assert.deepEqual([...file.data], [1, 2, 3]);
+  assert.equal((await dictionary.fetchAudio(mp3, { fetchImpl: reply(200, 'application/octet-stream', [1]) })).contentType, 'audio/mpeg');
+  await assert.rejects(dictionary.fetchAudio('https://evil.example/a.mp3', { fetchImpl: reply(200, 'audio/mpeg', [1]) }), /not from the dictionary/);
+  await assert.rejects(dictionary.fetchAudio('https://api.dictionaryapi.dev/page', { fetchImpl: reply(200, 'text/html', [1]) }), /not an audio file/);
+  await assert.rejects(dictionary.fetchAudio(mp3, { fetchImpl: reply(200, 'audio/mpeg', []) }), /empty/);
+  await assert.rejects(dictionary.fetchAudio(mp3, { fetchImpl: reply(404, 'text/html', []) }), /failed \(404\)/);
+  const hang = (url, { signal }) => new Promise((resolve, reject) => {
+    signal.addEventListener('abort', () => { const e = new Error('aborted'); e.name = 'AbortError'; reject(e); });
+  });
+  await assert.rejects(dictionary.fetchAudio(mp3, { fetchImpl: hang, timeoutMs: 20 }), /did not download within/);
+});
+
 test('httpsUrl only accepts https and protocol-relative URLs', () => {
   assert.equal(dictionary.httpsUrl('//a.b/c.mp3'), 'https://a.b/c.mp3');
   assert.equal(dictionary.httpsUrl('http://a.b/c.mp3'), null);

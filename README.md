@@ -78,7 +78,10 @@ Notes:
    a word list (one per line, or comma-separated; up to 300 per upload).
 2. Each word is looked up at `api.dictionaryapi.dev` in small batches, with a
    progress bar. Responses are cached in the `dictionary_cache` table, so a word is
-   only fetched once across all decks.
+   only fetched once across all decks. The chosen pronunciation recording is then
+   copied into the `audio_files` table and served from `/api/audio/<id>`, because
+   dictionaryapi.dev is too slow to play from directly. Words without a saved
+   recording use the device's voice.
 3. Click **Choose meanings** on a word to see every meaning grouped by part of
    speech. Tick up to the deck's **Meanings per card** limit (default 3), reword
    any meaning, or write your own (for words the dictionary doesn't have). Pick

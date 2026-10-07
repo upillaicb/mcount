@@ -301,7 +301,8 @@ function mapDeck(r) {
     hasUnpublishedChanges: r.status === 'published' && r.updated_at > r.published_at,
     publishedCardCount: Array.isArray(r.published_cards) ? r.published_cards.length : 0,
     wordCount: r.word_count,
-    pendingCount: r.pending_count
+    pendingCount: r.pending_count,
+    pendingAudioCount: r.pending_audio_count
   };
 }
 
@@ -309,7 +310,9 @@ function selectDecks(where) {
   return sql`
     SELECT d.*,
       (SELECT COUNT(*) FROM deck_words WHERE deck_id = d.id) AS word_count,
-      (SELECT COUNT(*) FROM deck_words WHERE deck_id = d.id AND lookup_status = 'pending') AS pending_count
+      (SELECT COUNT(*) FROM deck_words WHERE deck_id = d.id AND lookup_status = 'pending') AS pending_count,
+      (SELECT COUNT(*) FROM deck_words WHERE deck_id = d.id AND lookup_status <> 'pending'
+         AND audio_url IS NOT NULL AND audio_id IS NULL AND audio_error IS NULL) AS pending_audio_count
     FROM decks d ${where} ORDER BY d.created_at DESC`;
 }
 
@@ -366,7 +369,10 @@ function mapWord(r) {
     id: r.id, word: r.word, position: r.position,
     lookupStatus: r.lookup_status,
     lookupError: r.lookup_error || null,
-    phonetic: r.phonetic, audioUrl: r.audio_url,
+    phonetic: r.phonetic,
+    audioUrl: r.audio_url,          // source recording chosen by the admin
+    audioId: r.audio_id || null,    // stored copy served from /api/audio/:id
+    audioError: r.audio_error || null,
     senses: r.senses || []
   };
 }
@@ -403,11 +409,19 @@ function pendingDeckWords(deckId, limit) {
   return sql`SELECT id, word FROM deck_words WHERE deck_id=${deckId} AND lookup_status='pending' ORDER BY position LIMIT ${limit}`;
 }
 
+// In UPDATE ... SET, audio_url on the right-hand side is the old value, so a new source
+// recording clears the stored copy and queues a download.
+function resetAudioIfChanged(tx, audioUrl) {
+  return tx`audio_id = CASE WHEN audio_url IS DISTINCT FROM ${audioUrl ?? null} THEN NULL ELSE audio_id END,
+             audio_error = CASE WHEN audio_url IS DISTINCT FROM ${audioUrl ?? null} THEN NULL ELSE audio_error END`;
+}
+
 async function setWordLookup(deckId, wordId, { lookupStatus, phonetic, audioUrl, senses, lookupError }) {
   await sql.begin(async tx => {
     await tx`
       UPDATE deck_words SET lookup_status=${lookupStatus}, phonetic=${phonetic ?? null},
-        audio_url=${audioUrl ?? null}, senses=${sql.json(senses || [])}, lookup_error=${lookupError ?? null}
+        audio_url=${audioUrl ?? null}, senses=${sql.json(senses || [])}, lookup_error=${lookupError ?? null},
+        ${resetAudioIfChanged(tx, audioUrl)}
       WHERE deck_id=${deckId} AND id=${wordId}`;
     await touchDeck(tx, deckId);
   });
@@ -418,6 +432,7 @@ async function updateDeckWord(deckId, wordId, { senses, phonetic, audioUrl }) {
     // A failed lookup is resolved once the admin supplies meanings by hand.
     await tx`
       UPDATE deck_words SET senses=${sql.json(senses)}, phonetic=${phonetic ?? null}, audio_url=${audioUrl ?? null},
+        ${resetAudioIfChanged(tx, audioUrl)},
         lookup_status = CASE WHEN lookup_status = 'error' AND ${senses.length > 0} THEN 'ready' ELSE lookup_status END,
         lookup_error = CASE WHEN ${senses.length > 0} THEN NULL ELSE lookup_error END
       WHERE deck_id=${deckId} AND id=${wordId}`;
@@ -427,8 +442,48 @@ async function updateDeckWord(deckId, wordId, { senses, phonetic, audioUrl }) {
 }
 
 async function retryFailedWords(deckId) {
-  const rows = await sql`UPDATE deck_words SET lookup_status='pending', lookup_error=NULL WHERE deck_id=${deckId} AND lookup_status='error' RETURNING id`;
-  return rows.length;
+  const lookups = await sql`UPDATE deck_words SET lookup_status='pending', lookup_error=NULL WHERE deck_id=${deckId} AND lookup_status='error' RETURNING id`;
+  const audio = await sql`UPDATE deck_words SET audio_error=NULL WHERE deck_id=${deckId} AND audio_error IS NOT NULL RETURNING id`;
+  return lookups.length + audio.length;
+}
+
+// ---------- Stored recordings ----------
+function pendingAudioWords(deckId, limit) {
+  return sql`
+    SELECT id, word, audio_url FROM deck_words
+    WHERE deck_id=${deckId} AND lookup_status <> 'pending'
+      AND audio_url IS NOT NULL AND audio_id IS NULL AND audio_error IS NULL
+    ORDER BY position LIMIT ${limit}`;
+}
+
+async function getAudioIdByUrl(url) {
+  const [r] = await sql`SELECT id FROM audio_files WHERE source_url=${url}`;
+  return r ? r.id : null;
+}
+
+async function saveAudio(url, contentType, data) {
+  const [r] = await sql`
+    INSERT INTO audio_files (source_url, content_type, byte_size, data, fetched_at)
+    VALUES (${url}, ${contentType}, ${data.length}, ${data}, ${now()})
+    ON CONFLICT (source_url) DO UPDATE SET content_type=EXCLUDED.content_type, byte_size=EXCLUDED.byte_size,
+      data=EXCLUDED.data, fetched_at=EXCLUDED.fetched_at
+    RETURNING id`;
+  return r.id;
+}
+
+async function getAudio(id) {
+  const [r] = await sql`SELECT content_type, data FROM audio_files WHERE id=${id}`;
+  return r ? { contentType: r.content_type, data: r.data } : null;
+}
+
+// Only applies if the admin hasn't picked a different recording in the meantime.
+async function setWordAudio(deckId, wordId, sourceUrl, { audioId, audioError }) {
+  await sql.begin(async tx => {
+    const updated = await tx`
+      UPDATE deck_words SET audio_id=${audioId ?? null}, audio_error=${audioError ?? null}
+      WHERE deck_id=${deckId} AND id=${wordId} AND audio_url=${sourceUrl} RETURNING id`;
+    if (updated.length) await touchDeck(tx, deckId);
+  });
 }
 
 async function deleteDeckWord(deckId, wordId) {
@@ -457,7 +512,8 @@ async function setDictionaryCache(word, status, response) {
 // Student-facing card; drops admin-only fields.
 function toCard(w) {
   return {
-    word: w.word, phonetic: w.phonetic, audioUrl: w.audioUrl,
+    // Students only ever get the stored copy; without one the app uses the device voice.
+    word: w.word, phonetic: w.phonetic, audioUrl: w.audioId ? '/api/audio/' + w.audioId : null,
     senses: w.senses.map(s => ({ partOfSpeech: s.partOfSpeech, definition: s.definition, example: s.example || '', synonyms: s.synonyms || [] }))
   };
 }
@@ -473,6 +529,7 @@ async function draftDeckCards(deckId) {
   const tooMany = words.filter(w => w.senses.length > deck.maxSenses);
   if (!words.length) problems.push('Add at least one word.');
   if (pending.length) problems.push(`${pending.length} word(s) are still being looked up.`);
+  if (deck.pendingAudioCount) problems.push(`${deck.pendingAudioCount} recording(s) are still being saved.`);
   if (empty.length) problems.push('No meaning chosen for: ' + empty.map(w => w.word).join(', '));
   if (tooMany.length) problems.push(`More than ${deck.maxSenses} meaning(s) chosen for: ` + tooMany.map(w => w.word).join(', '));
   const cards = words.filter(w => w.senses.length).map(toCard);
@@ -521,5 +578,6 @@ module.exports = {
   listDecks, getDeck, createDeck, updateDeck, changeDeckSlug, deleteDeck,
   listDeckWords, getDeckWord, addDeckWords, pendingDeckWords, setWordLookup, updateDeckWord,
   retryFailedWords, deleteDeckWord, getDictionaryCache, setDictionaryCache,
+  pendingAudioWords, getAudioIdByUrl, saveAudio, getAudio, setWordAudio,
   draftDeckCards, publishDeck, unpublishDeck, listPublishedDecks, getPublishedDeck
 };
