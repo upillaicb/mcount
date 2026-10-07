@@ -1,0 +1,15 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "redirects": [
+    { "source": "/", "destination": "/admin.html", "permanent": false }
+  ],
+  "rewrites": [
+    { "source": "/q/:slug", "destination": "/quiz.html" }
+  ],
+  "headers": [
+    {
+      "source": "/app/sw.js",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+    }
+  ]
+}

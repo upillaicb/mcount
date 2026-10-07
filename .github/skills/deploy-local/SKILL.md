@@ -20,6 +20,8 @@ Trigger this skill when the user wants to:
 - Node.js 18+ installed (`node -v`)
 - TV and Mac on the **same Wi-Fi / VLAN**
 - Project dependencies installed (`npm install`)
+- Docker Desktop running, and the local Supabase database started (`npm run db:start`).
+  `npm start` fails to serve data if Postgres on `127.0.0.1:54322` is not up.
 
 ## Procedure
 

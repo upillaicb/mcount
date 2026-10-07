@@ -7,3 +7,7 @@ mcount.db-shm
 .DS_Store
 *.log
 .env
+.vercel
+public/app/vendor/
+supabase/.temp/
+supabase/.branches/

@@ -3,13 +3,25 @@
   "version": "1.0.0",
   "description": "Simple quiz web app with admin console and participant view",
   "main": "server.js",
+  "engines": {
+    "node": ">=22.13"
+  },
   "scripts": {
-    "start": "node server.js",
-    "test": "node --test"
+    "start": "node --env-file-if-exists=.env server.js",
+    "build": "node scripts/copy-vendor.js",
+    "test": "node --test",
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
+    "db:reset": "supabase db reset",
+    "db:push": "supabase db push",
+    "db:import-sqlite": "node --env-file-if-exists=.env scripts/import-sqlite.js"
   },
   "dependencies": {
-    "better-sqlite3": "^13.0.3",
     "express": "^4.19.2",
-    "lucide": "^0.468.0"
+    "lucide": "^0.468.0",
+    "postgres": "^3.4.5"
+  },
+  "devDependencies": {
+    "supabase": "^2.0.0"
   }
 }

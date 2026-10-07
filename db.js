@@ -1,68 +1,41 @@
-const Database = require('better-sqlite3');
-const fs = require('fs');
-const path = require('path');
+const postgres = require('postgres');
 const crypto = require('crypto');
 
-const DB_FILE = path.join(__dirname, 'mcount.db');
+// Local Supabase default (npx supabase start). Hosted deployments must set DATABASE_URL.
+const LOCAL_DATABASE_URL = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres';
+const DATABASE_URL = process.env.DATABASE_URL || (process.env.VERCEL ? null : LOCAL_DATABASE_URL);
+if (!DATABASE_URL) throw new Error('DATABASE_URL must be set');
 
-const db = new Database(DB_FILE);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(DATABASE_URL);
 
-db.exec(`
-CREATE TABLE IF NOT EXISTS quizzes (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  duration_seconds INTEGER NOT NULL DEFAULT 30,
-  answer_seconds INTEGER NOT NULL DEFAULT 5,
-  created_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS questions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  quiz_id TEXT NOT NULL REFERENCES quizzes(id) ON DELETE CASCADE,
-  position INTEGER NOT NULL,
-  text TEXT NOT NULL,
-  answer TEXT NOT NULL DEFAULT ''
-);
-CREATE INDEX IF NOT EXISTS idx_questions_quiz ON questions(quiz_id, position);
-
-CREATE TABLE IF NOT EXISTS runs (
-  id TEXT PRIMARY KEY,
-  quiz_id TEXT NOT NULL REFERENCES quizzes(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'draft', -- draft | published | completed
-  randomized INTEGER NOT NULL DEFAULT 0,
-  question_order TEXT NOT NULL DEFAULT '[]', -- JSON array of question ids in run order
-  created_at INTEGER NOT NULL,
-  published_at INTEGER,
-  completed_at INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_runs_quiz ON runs(quiz_id);
-
-CREATE TABLE IF NOT EXISTS participants (
-  id TEXT PRIMARY KEY,
-  run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  score INTEGER NOT NULL DEFAULT 0,
-  created_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_participants_run ON participants(run_id);
-`);
+const sql = postgres(DATABASE_URL, {
+  // Supabase's transaction pooler (port 6543) does not support prepared statements.
+  prepare: false,
+  // Serverless instances each hold their own pool; keep it small.
+  max: process.env.VERCEL ? 1 : 10,
+  idle_timeout: 20,
+  ssl: isLocal ? false : 'require',
+  // COUNT(*) and bigint columns (ids, epoch ms) fit safely in a JS number.
+  types: {
+    bigint: { to: 20, from: [20], serialize: x => String(x), parse: x => Number(x) }
+  }
+});
 
 function newId(n = 4) { return crypto.randomBytes(n).toString('hex'); }
 function now() { return Date.now(); }
 
 // ---------- Quizzes ----------
-function listQuizzes() {
-  const rows = db.prepare(`
+function selectQuizzes(where) {
+  return sql`
     SELECT q.*,
       (SELECT COUNT(*) FROM questions WHERE quiz_id = q.id) AS question_count,
       (SELECT COUNT(*) FROM runs WHERE quiz_id = q.id) AS run_count,
       (SELECT id FROM runs WHERE quiz_id = q.id AND status='published' ORDER BY published_at DESC LIMIT 1) AS active_run_id
-    FROM quizzes q ORDER BY q.created_at DESC
-  `).all();
-  return rows.map(mapQuiz);
+    FROM quizzes q ${where} ORDER BY q.created_at DESC`;
+}
+
+async function listQuizzes() {
+  return (await selectQuizzes(sql``)).map(mapQuiz);
 }
 
 function mapQuiz(r) {
@@ -78,85 +51,89 @@ function mapQuiz(r) {
   };
 }
 
-function getQuiz(id) {
-  const r = db.prepare(`
-    SELECT q.*,
-      (SELECT COUNT(*) FROM questions WHERE quiz_id = q.id) AS question_count,
-      (SELECT COUNT(*) FROM runs WHERE quiz_id = q.id) AS run_count,
-      (SELECT id FROM runs WHERE quiz_id = q.id AND status='published' ORDER BY published_at DESC LIMIT 1) AS active_run_id
-    FROM quizzes q WHERE q.id=?`).get(id);
+async function getQuiz(id) {
+  const [r] = await selectQuizzes(sql`WHERE q.id = ${id}`);
   return mapQuiz(r);
 }
 
-function createQuiz(name) {
+async function createQuiz(name) {
   const id = newId();
-  db.prepare(`INSERT INTO quizzes (id, name, duration_seconds, answer_seconds, created_at)
-              VALUES (?, ?, 30, 5, ?)`).run(id, name || 'Untitled quiz', now());
+  await sql`INSERT INTO quizzes (id, name, duration_seconds, answer_seconds, created_at)
+            VALUES (${id}, ${name || 'Untitled quiz'}, 30, 5, ${now()})`;
   return getQuiz(id);
 }
 
-function renameQuiz(id, name) {
-  db.prepare(`UPDATE quizzes SET name=? WHERE id=?`).run(name, id);
+async function renameQuiz(id, name) {
+  await sql`UPDATE quizzes SET name=${name} WHERE id=${id}`;
   return getQuiz(id);
 }
 
-function setQuizDuration(id, sec) {
-  db.prepare(`UPDATE quizzes SET duration_seconds=? WHERE id=?`).run(sec, id);
+async function setQuizDuration(id, sec) {
+  await sql`UPDATE quizzes SET duration_seconds=${sec} WHERE id=${id}`;
   return getQuiz(id);
 }
-function setQuizAnswerDuration(id, sec) {
-  db.prepare(`UPDATE quizzes SET answer_seconds=? WHERE id=?`).run(sec, id);
+async function setQuizAnswerDuration(id, sec) {
+  await sql`UPDATE quizzes SET answer_seconds=${sec} WHERE id=${id}`;
   return getQuiz(id);
 }
 
-function changeQuizSlug(id, newSlug) {
-  if (db.prepare(`SELECT 1 FROM quizzes WHERE id=?`).get(newSlug)) {
-    const err = new Error('slug already in use'); err.code = 'DUP'; throw err;
+// questions.quiz_id and runs.quiz_id cascade on update.
+async function changeQuizSlug(id, newSlug) {
+  const dup = () => { const err = new Error('slug already in use'); err.code = 'DUP'; return err; };
+  const [exists] = await sql`SELECT 1 FROM quizzes WHERE id=${newSlug}`;
+  if (exists) throw dup();
+  try {
+    await sql`UPDATE quizzes SET id=${newSlug} WHERE id=${id}`;
+  } catch (e) {
+    if (e.code === '23505') throw dup();
+    throw e;
   }
-  db.transaction(() => {
-    db.pragma('defer_foreign_keys = ON');
-    db.prepare(`UPDATE quizzes SET id=? WHERE id=?`).run(newSlug, id);
-    db.prepare(`UPDATE questions SET quiz_id=? WHERE quiz_id=?`).run(newSlug, id);
-    db.prepare(`UPDATE runs SET quiz_id=? WHERE quiz_id=?`).run(newSlug, id);
-  })();
   return getQuiz(newSlug);
 }
 
-function deleteQuiz(id) {
-  db.prepare(`DELETE FROM quizzes WHERE id=?`).run(id);
+async function deleteQuiz(id) {
+  await sql`DELETE FROM quizzes WHERE id=${id}`;
 }
 
 // ---------- Questions ----------
 function listQuestions(quizId) {
-  return db.prepare(`SELECT id, text, answer FROM questions WHERE quiz_id=? ORDER BY position`).all(quizId);
+  return sql`SELECT id, text, answer FROM questions WHERE quiz_id=${quizId} ORDER BY position`;
 }
 
-function addQuestion(quizId, text, answer) {
-  const max = db.prepare(`SELECT COALESCE(MAX(position), -1) AS m FROM questions WHERE quiz_id=?`).get(quizId).m;
-  const info = db.prepare(`INSERT INTO questions (quiz_id, position, text, answer) VALUES (?, ?, ?, ?)`)
-    .run(quizId, max + 1, text, answer || '');
-  return db.prepare(`SELECT id, text, answer FROM questions WHERE id=?`).get(info.lastInsertRowid);
+async function addQuestion(quizId, text, answer) {
+  const [row] = await sql`
+    INSERT INTO questions (quiz_id, position, text, answer)
+    VALUES (${quizId}, (SELECT COALESCE(MAX(position), -1) + 1 FROM questions WHERE quiz_id=${quizId}), ${text}, ${answer || ''})
+    RETURNING id, text, answer`;
+  return row;
 }
 
-function deleteQuestionByPosition(quizId, position) {
-  const rows = db.prepare(`SELECT id FROM questions WHERE quiz_id=? ORDER BY position`).all(quizId);
-  if (position < 0 || position >= rows.length) return;
-  db.prepare(`DELETE FROM questions WHERE id=?`).run(rows[position].id);
-  const remaining = db.prepare(`SELECT id FROM questions WHERE quiz_id=? ORDER BY position`).all(quizId);
-  const upd = db.prepare(`UPDATE questions SET position=? WHERE id=?`);
-  db.transaction(() => { remaining.forEach((r, i) => upd.run(i, r.id)); })();
+async function deleteQuestionByPosition(quizId, position) {
+  await sql.begin(async tx => {
+    const rows = await tx`SELECT id FROM questions WHERE quiz_id=${quizId} ORDER BY position`;
+    if (!(position >= 0 && position < rows.length)) return;
+    await tx`DELETE FROM questions WHERE id=${rows[position].id}`;
+    await tx`
+      UPDATE questions q SET position = r.rn - 1
+      FROM (SELECT id, row_number() OVER (ORDER BY position) AS rn FROM questions WHERE quiz_id=${quizId}) r
+      WHERE q.id = r.id`;
+  });
 }
 
-function clearQuestions(quizId) {
-  db.prepare(`DELETE FROM questions WHERE quiz_id=?`).run(quizId);
+async function clearQuestions(quizId) {
+  await sql`DELETE FROM questions WHERE quiz_id=${quizId}`;
 }
 
-function replaceQuestions(quizId, items) {
-  db.transaction(() => {
-    db.prepare(`DELETE FROM questions WHERE quiz_id=?`).run(quizId);
-    const ins = db.prepare(`INSERT INTO questions (quiz_id, position, text, answer) VALUES (?, ?, ?, ?)`);
-    items.forEach((it, i) => ins.run(quizId, i, it.text, it.answer || ''));
-  })();
+async function replaceQuestions(quizId, items) {
+  const rows = items.map((it, i) => ({ quiz_id: quizId, position: i, text: it.text, answer: it.answer || '' }));
+  await sql.begin(async tx => {
+    await tx`DELETE FROM questions WHERE quiz_id=${quizId}`;
+    if (rows.length) await tx`INSERT INTO questions ${tx(rows, 'quiz_id', 'position', 'text', 'answer')}`;
+  });
+}
+
+async function questionIds(quizId) {
+  return (await sql`SELECT id FROM questions WHERE quiz_id=${quizId} ORDER BY position`).map(x => x.id);
 }
 
 // ---------- Runs ----------
@@ -165,38 +142,35 @@ function mapRun(r) {
   return {
     id: r.id, quizId: r.quiz_id, name: r.name, status: r.status,
     randomized: !!r.randomized,
-    questionOrder: JSON.parse(r.question_order || '[]'),
+    questionOrder: r.question_order || [],
     createdAt: r.created_at,
     publishedAt: r.published_at,
     completedAt: r.completed_at
   };
 }
 
-function listRuns(quizId) {
-  const rows = db.prepare(`SELECT * FROM runs WHERE quiz_id=? ORDER BY created_at DESC`).all(quizId);
-  return rows.map(r => {
-    const run = mapRun(r);
-    run.participantCount = db.prepare(`SELECT COUNT(*) AS c FROM participants WHERE run_id=?`).get(run.id).c;
-    const top = db.prepare(`SELECT MAX(score) AS m FROM participants WHERE run_id=?`).get(run.id).m;
-    run.topScore = top;
-    return run;
-  });
+async function listRuns(quizId) {
+  const rows = await sql`
+    SELECT r.*, COUNT(p.id) AS participant_count, MAX(p.score) AS top_score
+    FROM runs r LEFT JOIN participants p ON p.run_id = r.id
+    WHERE r.quiz_id=${quizId}
+    GROUP BY r.id ORDER BY r.created_at DESC`;
+  return rows.map(r => Object.assign(mapRun(r), { participantCount: r.participant_count, topScore: r.top_score }));
 }
 
-function getRun(runId) {
-  const r = db.prepare(`SELECT * FROM runs WHERE id=?`).get(runId);
+async function getRun(runId) {
+  const [r] = await sql`SELECT * FROM runs WHERE id=${runId}`;
   return mapRun(r);
 }
 
-function createRun(quizId, name, randomized) {
-  const quiz = getQuiz(quizId);
+async function createRun(quizId, name, randomized) {
+  const quiz = await getQuiz(quizId);
   if (!quiz) return null;
-  const qs = db.prepare(`SELECT id FROM questions WHERE quiz_id=? ORDER BY position`).all(quizId).map(x => x.id);
+  const qs = await questionIds(quizId);
   const order = randomized ? shuffle(qs.slice()) : qs;
   const id = newId();
-  db.prepare(`INSERT INTO runs (id, quiz_id, name, status, randomized, question_order, created_at)
-              VALUES (?, ?, ?, 'draft', ?, ?, ?)`)
-    .run(id, quizId, name || `Run ${new Date().toLocaleString()}`, randomized ? 1 : 0, JSON.stringify(order), now());
+  await sql`INSERT INTO runs (id, quiz_id, name, status, randomized, question_order, created_at)
+            VALUES (${id}, ${quizId}, ${name || `Run ${new Date().toLocaleString()}`}, 'draft', ${!!randomized}, ${sql.json(order)}, ${now()})`;
   return getRun(id);
 }
 
@@ -208,137 +182,120 @@ function shuffle(arr) {
   return arr;
 }
 
-function renameRun(runId, name) {
-  db.prepare(`UPDATE runs SET name=? WHERE id=?`).run(name, runId);
+async function renameRun(runId, name) {
+  await sql`UPDATE runs SET name=${name} WHERE id=${runId}`;
   return getRun(runId);
 }
 
-function reshuffleRun(runId) {
-  const run = getRun(runId);
+async function reshuffleRun(runId) {
+  const run = await getRun(runId);
   if (!run) return null;
-  const qs = db.prepare(`SELECT id FROM questions WHERE quiz_id=? ORDER BY position`).all(run.quizId).map(x => x.id);
-  const order = shuffle(qs.slice());
-  db.prepare(`UPDATE runs SET randomized=1, question_order=? WHERE id=?`).run(JSON.stringify(order), runId);
+  const order = shuffle(await questionIds(run.quizId));
+  await sql`UPDATE runs SET randomized=true, question_order=${sql.json(order)} WHERE id=${runId}`;
   return getRun(runId);
 }
 
-function resetRunOrder(runId) {
-  const run = getRun(runId);
+async function resetRunOrder(runId) {
+  const run = await getRun(runId);
   if (!run) return null;
-  const qs = db.prepare(`SELECT id FROM questions WHERE quiz_id=? ORDER BY position`).all(run.quizId).map(x => x.id);
-  db.prepare(`UPDATE runs SET randomized=0, question_order=? WHERE id=?`).run(JSON.stringify(qs), runId);
+  const qs = await questionIds(run.quizId);
+  await sql`UPDATE runs SET randomized=false, question_order=${sql.json(qs)} WHERE id=${runId}`;
   return getRun(runId);
 }
 
-function publishRun(runId) {
-  const run = getRun(runId);
+async function publishRun(runId) {
+  const run = await getRun(runId);
   if (!run) return null;
-  db.transaction(() => {
-    // Only one published run per quiz.
-    db.prepare(`UPDATE runs SET status='draft' WHERE quiz_id=? AND status='published' AND id<>?`).run(run.quizId, runId);
-    db.prepare(`UPDATE runs SET status='published', published_at=?, completed_at=NULL WHERE id=?`).run(now(), runId);
-  })();
+  await sql.begin(async tx => {
+    // Only one published run per quiz (also enforced by idx_runs_one_published).
+    await tx`UPDATE runs SET status='draft' WHERE quiz_id=${run.quizId} AND status='published' AND id<>${runId}`;
+    await tx`UPDATE runs SET status='published', published_at=${now()}, completed_at=NULL WHERE id=${runId}`;
+  });
   return getRun(runId);
 }
 
-function unpublishRun(runId) {
-  db.prepare(`UPDATE runs SET status='draft' WHERE id=?`).run(runId);
+async function unpublishRun(runId) {
+  await sql`UPDATE runs SET status='draft' WHERE id=${runId}`;
   return getRun(runId);
 }
 
-function completeRun(runId) {
-  db.prepare(`UPDATE runs SET status='completed', completed_at=? WHERE id=?`).run(now(), runId);
+async function completeRun(runId) {
+  await sql`UPDATE runs SET status='completed', completed_at=${now()} WHERE id=${runId}`;
   return getRun(runId);
 }
 
-function deleteRun(runId) {
-  db.prepare(`DELETE FROM runs WHERE id=?`).run(runId);
+async function deleteRun(runId) {
+  await sql`DELETE FROM runs WHERE id=${runId}`;
 }
 
-function getActiveRunForQuiz(quizId) {
-  const r = db.prepare(`SELECT * FROM runs WHERE quiz_id=? AND status='published' ORDER BY published_at DESC LIMIT 1`).get(quizId);
+async function getActiveRunForQuiz(quizId) {
+  const [r] = await sql`SELECT * FROM runs WHERE quiz_id=${quizId} AND status='published' ORDER BY published_at DESC LIMIT 1`;
   return mapRun(r);
 }
 
 // Expands questionOrder ids to full question objects for the participant view.
-function getRunQuestions(run) {
+async function getRunQuestions(run) {
   if (!run.questionOrder.length) return [];
-  const placeholders = run.questionOrder.map(() => '?').join(',');
-  const rows = db.prepare(`SELECT id, text, answer FROM questions WHERE id IN (${placeholders})`).all(...run.questionOrder);
+  const rows = await sql`SELECT id, text, answer FROM questions WHERE id IN ${sql(run.questionOrder)}`;
   const byId = new Map(rows.map(r => [r.id, r]));
   return run.questionOrder.map(id => byId.get(id)).filter(Boolean).map(({ text, answer }) => ({ text, answer }));
 }
 
+// Published runs for the client library, in one query.
+async function listCatalog() {
+  const rows = await sql`
+    SELECT q.id, q.name, q.duration_seconds, q.answer_seconds, r.id AS run_id, r.name AS run_name,
+      (SELECT COUNT(*) FROM questions qq
+        WHERE qq.id IN (SELECT jsonb_array_elements_text(r.question_order)::bigint)) AS question_count
+    FROM quizzes q
+    JOIN LATERAL (
+      SELECT * FROM runs WHERE quiz_id = q.id AND status='published' ORDER BY published_at DESC LIMIT 1
+    ) r ON true
+    ORDER BY q.created_at DESC`;
+  return rows.map(r => ({
+    id: r.id,
+    name: r.name,
+    runId: r.run_id,
+    runName: r.run_name,
+    questionCount: r.question_count,
+    durationSeconds: r.duration_seconds,
+    answerSeconds: r.answer_seconds
+  }));
+}
+
 // ---------- Participants ----------
 function listParticipants(runId) {
-  return db.prepare(`SELECT id, name, score FROM participants WHERE run_id=? ORDER BY score DESC, created_at ASC`).all(runId);
+  return sql`SELECT id, name, score FROM participants WHERE run_id=${runId} ORDER BY score DESC, created_at ASC`;
 }
 
-function addParticipant(runId, name) {
-  const id = newId();
-  db.prepare(`INSERT INTO participants (id, run_id, name, score, created_at) VALUES (?, ?, ?, 0, ?)`)
-    .run(id, runId, name, now());
-  return db.prepare(`SELECT id, name, score FROM participants WHERE id=?`).get(id);
+async function addParticipant(runId, name) {
+  const [row] = await sql`
+    INSERT INTO participants (id, run_id, name, score, created_at)
+    VALUES (${newId()}, ${runId}, ${name}, 0, ${now()})
+    RETURNING id, name, score`;
+  return row;
 }
 
-function deleteParticipant(pid) {
-  db.prepare(`DELETE FROM participants WHERE id=?`).run(pid);
+async function deleteParticipant(pid) {
+  await sql`DELETE FROM participants WHERE id=${pid}`;
 }
 
-function scoreParticipant(pid, delta) {
-  db.prepare(`UPDATE participants SET score = score + ? WHERE id=?`).run(delta, pid);
-  return db.prepare(`SELECT id, name, score FROM participants WHERE id=?`).get(pid);
+async function scoreParticipant(pid, delta) {
+  const [row] = await sql`UPDATE participants SET score = score + ${delta} WHERE id=${pid} RETURNING id, name, score`;
+  return row;
 }
 
-function resetRunScores(runId) {
-  db.prepare(`UPDATE participants SET score=0 WHERE run_id=?`).run(runId);
+async function resetRunScores(runId) {
+  await sql`UPDATE participants SET score=0 WHERE run_id=${runId}`;
 }
-
-// ---------- Migration from legacy data.json ----------
-function migrateFromJsonIfPresent() {
-  const jsonFile = path.join(__dirname, 'data.json');
-  if (!fs.existsSync(jsonFile)) return;
-  const already = db.prepare(`SELECT COUNT(*) AS c FROM quizzes`).get().c;
-  if (already > 0) return;
-  let raw;
-  try { raw = JSON.parse(fs.readFileSync(jsonFile, 'utf8')); } catch (e) { return; }
-  const quizzes = raw.quizzes || {};
-  const t = now();
-  db.transaction(() => {
-    for (const q of Object.values(quizzes)) {
-      db.prepare(`INSERT OR IGNORE INTO quizzes (id, name, duration_seconds, answer_seconds, created_at)
-                  VALUES (?, ?, ?, ?, ?)`)
-        .run(q.id, q.name || 'Untitled', q.durationSeconds || 30, q.answerSeconds || 5, t);
-      (q.questions || []).forEach((qq, i) => {
-        db.prepare(`INSERT INTO questions (quiz_id, position, text, answer) VALUES (?, ?, ?, ?)`)
-          .run(q.id, i, qq.text || '', qq.answer || '');
-      });
-      // Create an initial run and carry over participants + published state.
-      const runId = newId();
-      const order = db.prepare(`SELECT id FROM questions WHERE quiz_id=? ORDER BY position`).all(q.id).map(r => r.id);
-      const status = q.published ? 'published' : 'draft';
-      db.prepare(`INSERT INTO runs (id, quiz_id, name, status, randomized, question_order, created_at, published_at)
-                  VALUES (?, ?, 'Run 1', ?, 0, ?, ?, ?)`)
-        .run(runId, q.id, status, JSON.stringify(order), t, q.published ? t : null);
-      (q.participants || []).forEach(p => {
-        db.prepare(`INSERT INTO participants (id, run_id, name, score, created_at) VALUES (?, ?, ?, ?, ?)`)
-          .run(p.id || newId(), runId, p.name || 'Unknown', p.score || 0, t);
-      });
-    }
-  })();
-  // Keep data.json as backup; rename so we don't migrate twice.
-  try { fs.renameSync(jsonFile, jsonFile + '.migrated'); } catch (e) {}
-}
-
-migrateFromJsonIfPresent();
 
 module.exports = {
-  db, newId,
+  sql, newId,
   listQuizzes, getQuiz, createQuiz, renameQuiz, setQuizDuration, setQuizAnswerDuration,
   changeQuizSlug, deleteQuiz,
   listQuestions, addQuestion, deleteQuestionByPosition, clearQuestions, replaceQuestions,
   listRuns, getRun, createRun, renameRun, reshuffleRun, resetRunOrder,
   publishRun, unpublishRun, completeRun, deleteRun,
-  getActiveRunForQuiz, getRunQuestions,
+  getActiveRunForQuiz, getRunQuestions, listCatalog,
   listParticipants, addParticipant, deleteParticipant, scoreParticipant, resetRunScores
 };

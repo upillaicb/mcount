@@ -13,6 +13,10 @@ test('client catalog and assets are additive to existing routes', async context 
   let quizzes = [quiz, { id: 'draft', name: 'Draft quiz', activeRunId: null }];
   let activeRun = run;
   const fixture = {
+    listCatalog: async () => quizzes.filter(q => q.activeRunId).map(q => ({
+      id: q.id, name: q.name, runId: activeRun.id, runName: activeRun.name,
+      questionCount: questions.length, durationSeconds: q.durationSeconds, answerSeconds: q.answerSeconds
+    })),
     listQuizzes: () => quizzes,
     getQuiz: id => id === quiz.id ? quiz : null,
     getActiveRunForQuiz: () => activeRun,
@@ -49,6 +53,9 @@ test('client catalog and assets are additive to existing routes', async context 
   quizzes = [];
   assert.deepEqual(await (await fetch(base + '/api/catalog')).json(), []);
   assert.equal((await fetch(base + '/api/admin/quizzes')).status, 401);
+  assert.equal((await fetch(base + '/api/admin/quizzes?token=admin123')).status, 401);
+  assert.equal((await fetch(base + '/api/admin/quizzes', { headers: { 'X-Admin-Token': 'wrong' } })).status, 401);
+  assert.deepEqual(await (await fetch(base + '/api/admin/quizzes', { headers: { 'X-Admin-Token': 'admin123' } })).json(), []);
   assert.equal((await fetch(base + '/', { redirect: 'manual' })).headers.get('location'), '/admin.html');
   assert.equal((await fetch(base + '/q/active')).status, 200);
   assert.equal((await fetch(base + '/admin.html')).status, 200);
