@@ -394,11 +394,17 @@ async function addDeckWords(deckId, entries, replace) {
   });
 }
 
-async function updateDeckWord(deckId, wordId, senses) {
-  await sql.begin(async tx => {
-    await tx`UPDATE deck_words SET senses=${sql.json(senses)} WHERE deck_id=${deckId} AND id=${wordId}`;
-    await touchDeck(tx, deckId);
-  });
+// Throws err.code 'DUP' if the new spelling is already in the deck.
+async function updateDeckWord(deckId, wordId, { word, senses }) {
+  try {
+    await sql.begin(async tx => {
+      await tx`UPDATE deck_words SET word=${word}, senses=${sql.json(senses)} WHERE deck_id=${deckId} AND id=${wordId}`;
+      await touchDeck(tx, deckId);
+    });
+  } catch (e) {
+    if (e.code === '23505') { const err = new Error('word already in this deck'); err.code = 'DUP'; throw err; }
+    throw e;
+  }
   return getDeckWord(deckId, wordId);
 }
 

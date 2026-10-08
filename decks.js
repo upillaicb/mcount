@@ -8,6 +8,12 @@ function field(value, max, name) {
   return s;
 }
 
+// Letters, spaces, hyphens, and apostrophes; up to 48 characters. Returns null if invalid.
+function cleanWord(value) {
+  const word = String(value ?? '').trim().replace(/\s+/g, ' ');
+  return /^\p{L}[\p{L}\p{M}'’ -]{0,47}$/u.test(word) ? word : null;
+}
+
 // One entry per line:
 //   word
 //   word | meaning
@@ -20,8 +26,8 @@ function parseWordList(text) {
   for (const line of String(text || '').split(/\r?\n/)) {
     if (!line.trim()) continue;
     const parts = line.split('|').map(p => p.trim());
-    const word = parts[0].replace(/\s+/g, ' ');
-    if (!/^\p{L}[\p{L}\p{M}'’ -]{0,47}$/u.test(word)) { invalid.push(line.trim()); continue; }
+    const word = cleanWord(parts[0]);
+    if (!word) { invalid.push(line.trim()); continue; }
     let sense = null;
     try {
       if (parts.length === 2 && parts[1]) sense = { partOfSpeech: 'other', definition: field(parts[1], 500, 'meaning') };
@@ -54,4 +60,4 @@ function cleanSenses(senses, maxSenses) {
   });
 }
 
-module.exports = { parseWordList, cleanSenses };
+module.exports = { cleanWord, parseWordList, cleanSenses };

@@ -59,6 +59,10 @@
     .sense-edit { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: .6rem .75rem; margin: .5rem 0; }
     .sense-edit textarea, .sense-edit input { width: 100%; box-sizing: border-box; margin-top: .3rem; }
     .sense-edit .row { justify-content: space-between; margin: 0; }
+    .add-word { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: .75rem 1rem; margin: 1rem 0; }
+    .add-word h4 { margin: 0 0 .25rem; }
+    .add-word textarea, .add-word input:not(#awWord) { width: 100%; box-sizing: border-box; margin-top: .4rem; }
+    pre { background: #f1f5f9; padding: .5rem .75rem; border-radius: 6px; font-size: .85rem; }
     @media (max-width: 480px) {
       body { margin: 1rem auto; }
       .pcard { padding: .6rem .75rem; }
@@ -136,19 +140,28 @@
     </div>
 
     <h3>Words</h3>
-    <details id="addWords">
-      <summary>Add words</summary>
-      <p class="muted">One word per line. Meanings are optional here; you can add them per word below.</p>
-      <p class="muted">
-        <code>word</code> &nbsp;or&nbsp; <code>word | meaning</code> &nbsp;or&nbsp;
-        <code>word | part of speech | meaning | example</code><br>
-        Repeat a word on another line to give it another meaning.
-      </p>
-      <textarea id="wordText" rows="6" style="width:100%;box-sizing:border-box" placeholder="curious | adjective | wanting to know or learn something | The curious cat opened the box.&#10;enormous | very big&#10;whisper"></textarea>
+    <form id="addWordForm" class="add-word" onsubmit="addWord(event)">
+      <h4>Add a word</h4>
+      <div class="row">
+        <input id="awWord" placeholder="Word" required maxlength="48" style="flex:1;min-width:160px" />
+        <select id="awPos" title="Part of speech"></select>
+      </div>
+      <textarea id="awDef" rows="2" placeholder="Meaning in simple words (optional, you can add it later)"></textarea>
+      <input id="awEx" placeholder="Example sentence (optional)" />
+      <div class="row"><button type="submit" style="font-weight:700">➕ Add word</button></div>
+    </form>
+    <details>
+      <summary>Upload words from a file</summary>
+      <p class="muted">A <code>.txt</code> or <code>.csv</code> file with one word per line. Everything after the word is optional:</p>
+      <pre class="muted">curious
+enormous | very big
+whisper | verb | to speak very softly
+whisper | noun | a very soft voice | She spoke in a whisper.</pre>
+      <p class="muted">Columns are <code>word | meaning</code> or <code>word | part of speech | meaning | example</code>. Repeat a word on another line to give it another meaning.</p>
       <div class="row">
         <input type="file" id="wordFile" accept=".txt,.csv" />
-        <button onclick="addWords(false)">Add to deck</button>
-        <button class="danger" onclick="addWords(true)">Replace all words</button>
+        <button onclick="uploadWords(false)">Add to deck</button>
+        <button class="danger" onclick="uploadWords(true)">Replace all words</button>
       </div>
     </details>
     <table>
@@ -159,7 +172,8 @@
 
   <!-- Word editor -->
   <dialog id="wordEditor">
-    <h2 id="weWord"></h2>
+    <h2>Edit word</h2>
+    <input id="weWord" maxlength="48" style="width:100%;box-sizing:border-box;font-size:1.4rem;font-weight:700" />
     <h3 style="margin-bottom:.3rem">Meanings <span id="weCount" class="muted"></span></h3>
     <div id="weSenses"></div>
     <div class="row"><button id="weAdd" onclick="addSense()">➕ Add meaning</button></div>
@@ -714,15 +728,15 @@
           <td><b>${escapeHtml(w.word)}</b></td>
           <td class="sense-summary">${summary}</td>
           <td>
-            <button data-wact="edit" data-wid="${w.id}">${w.senses.length ? 'Edit' : 'Add meaning'}</button>
-            <button class="danger" data-wact="delete" data-wid="${w.id}" title="Remove word">✕</button>
+            <button data-wact="edit" data-wid="${w.id}">✏️ Edit</button>
+            <button class="danger" data-wact="delete" data-wid="${w.id}">🗑 Delete</button>
           </td>`;
         tbody.appendChild(tr);
       }
       tbody.querySelectorAll('[data-wact]').forEach(b => {
         b.addEventListener('click', async () => {
           if (b.dataset.wact === 'edit') openWordEditor(b.dataset.wid);
-          else if (confirm('Remove this word from the deck?')) {
+          else if (confirm('Delete this word from the deck?')) {
             await api(`/api/admin/decks/${currentDeckId}/words/${b.dataset.wid}`, { method: 'DELETE' });
             loadDeck();
           }
@@ -758,19 +772,34 @@
       } catch (e) { route(); }
     }
 
-    async function addWords(replace) {
-      if (replace && !confirm('Replace every word in this deck? Existing meanings will be lost.')) return;
+    async function addWord(ev) {
+      ev.preventDefault();
+      const wordEl = document.getElementById('awWord');
+      const body = {
+        word: wordEl.value.trim(),
+        partOfSpeech: document.getElementById('awPos').value,
+        definition: document.getElementById('awDef').value.trim(),
+        example: document.getElementById('awEx').value.trim()
+      };
+      if (!body.word) return;
+      try { await api(`/api/admin/decks/${currentDeckId}/word`, { method: 'POST', body }); }
+      catch (e) { return; }
+      ['awWord', 'awDef', 'awEx'].forEach(id => { document.getElementById(id).value = ''; });
+      wordEl.focus();
+      loadDeck();
+    }
+
+    async function uploadWords(replace) {
       const fileEl = document.getElementById('wordFile');
-      const textEl = document.getElementById('wordText');
-      let text = textEl.value;
-      if (fileEl.files[0]) text += '\n' + await fileEl.files[0].text();
-      if (!text.trim()) { alert('Type some words or choose a file first.'); return; }
+      if (!fileEl.files[0]) { alert('Choose a file first.'); return; }
+      if (replace && !confirm('Replace every word in this deck? Existing meanings will be lost.')) return;
+      const text = await fileEl.files[0].text();
       const r = await api(`/api/admin/decks/${currentDeckId}/words`, { method: 'POST', body: { text, replace } });
-      textEl.value = ''; fileEl.value = '';
+      fileEl.value = '';
       let msg = `Added ${r.added} word(s).`;
       if (r.skipped) msg += ` ${r.skipped} already in the deck.`;
-      if (r.invalid.length) msg += ` Skipped (not a word): ${r.invalid.join(', ')}`;
-      if (r.skipped || r.invalid.length) alert(msg);
+      if (r.invalid.length) msg += `\nSkipped lines that couldn't be read: ${r.invalid.join(', ')}`;
+      alert(msg);
       await loadDeck();
     }
 
@@ -798,13 +827,14 @@
 
     // ---------- Word editor ----------
     const PARTS_OF_SPEECH = ['noun', 'verb', 'adjective', 'adverb', 'pronoun', 'preposition', 'conjunction', 'interjection', 'other'];
+    document.getElementById('awPos').innerHTML = PARTS_OF_SPEECH.map(p => `<option>${p}</option>`).join('');
 
     function openWordEditor(wid) {
       const w = currentDeck.words.find(x => String(x.id) === String(wid));
       if (!w) return;
       editing = { id: w.id, max: currentDeck.maxSenses, senses: w.senses.map(s => ({ ...s })) };
       if (!editing.senses.length) editing.senses.push({ partOfSpeech: 'noun', definition: '', example: '' });
-      document.getElementById('weWord').textContent = w.word;
+      document.getElementById('weWord').value = w.word;
       renderWordEditor();
       document.getElementById('wordEditor').showModal();
       const first = document.querySelector('#weSenses textarea');
@@ -852,11 +882,13 @@
     }
 
     async function saveWord() {
+      const word = document.getElementById('weWord').value.trim();
+      if (!word) { alert('Enter the word.'); return; }
       const senses = editing.senses.map(s => ({ ...s, definition: s.definition.trim() })).filter(s => s.definition);
       const btn = document.getElementById('weSave');
       btn.disabled = true; btn.textContent = 'Saving…';
       try {
-        await api(`/api/admin/decks/${currentDeckId}/words/${editing.id}`, { method: 'PUT', timeoutMs: 20000, body: { senses } });
+        await api(`/api/admin/decks/${currentDeckId}/words/${editing.id}`, { method: 'PUT', timeoutMs: 20000, body: { word, senses } });
       } catch (e) { return; }
       finally { btn.disabled = false; btn.textContent = 'Save'; }
       document.getElementById('wordEditor').close();

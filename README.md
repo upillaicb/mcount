@@ -74,8 +74,9 @@ Notes:
 
 ## Vocabulary flashcards
 
-1. In the admin console, create a deck under **Flashcard decks** and paste or upload
-   a word list (up to 300 words per upload). Each line is one of:
+1. In the admin console, create a deck under **Flashcard decks**. Add words one at a
+   time with the **Add a word** form (word, part of speech, meaning, example), or
+   upload a `.txt`/`.csv` file (up to 300 words). Each line of the file is one of:
    ```
    word
    word | meaning
@@ -83,8 +84,8 @@ Notes:
    word | part of speech | meaning | example
    ```
    Repeat a word on another line to give it more than one meaning.
-2. Click **Add meaning** / **Edit** on a word to type or change its meanings, up to
-   the deck's **Meanings per card** limit (default 3).
+2. Each word has **Edit** (change the spelling and meanings, up to the deck's
+   **Meanings per card** limit, default 3) and **Delete** buttons.
 3. **Preview** opens the student view with the unpublished cards (uses the admin
    token saved in this browser). **Publish** freezes a copy for students; later
    edits stay invisible until you publish again.

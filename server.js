@@ -312,13 +312,34 @@ app.post('/api/admin/decks/:id/words', requireAdmin, route(async (req, res) => {
   res.json({ ...result, invalid: parsed.invalid });
 }));
 
+// Adds a single word from the admin form. Meaning, part of speech, and example are optional.
+app.post('/api/admin/decks/:id/word', requireAdmin, route(async (req, res) => {
+  const deck = await db.getDeck(req.params.id);
+  if (!deck) return res.status(404).json({ error: 'not found' });
+  const word = decks.cleanWord(req.body.word);
+  if (!word) return res.status(400).json({ error: 'enter a word (letters, spaces, hyphens, apostrophes; max 48)' });
+  let senses = [];
+  try {
+    if (String(req.body.definition || '').trim()) senses = decks.cleanSenses([req.body], deck.maxSenses);
+  } catch (e) { return res.status(400).json({ error: e.message }); }
+  const result = await db.addDeckWords(req.params.id, [{ word, senses }], false);
+  if (!result.added) return res.status(409).json({ error: `"${word}" is already in this deck. Use Edit to change it.` });
+  res.json(result);
+}));
+
 app.put('/api/admin/decks/:id/words/:wid', requireAdmin, route(async (req, res) => {
   const deck = await db.getDeck(req.params.id);
   if (!deck || !(await db.getDeckWord(req.params.id, req.params.wid))) return res.status(404).json({ error: 'not found' });
+  const word = decks.cleanWord(req.body.word);
+  if (!word) return res.status(400).json({ error: 'enter a word (letters, spaces, hyphens, apostrophes; max 48)' });
   let senses;
   try { senses = decks.cleanSenses(req.body.senses, deck.maxSenses); }
   catch (e) { return res.status(400).json({ error: e.message }); }
-  res.json(await db.updateDeckWord(req.params.id, req.params.wid, senses));
+  try { res.json(await db.updateDeckWord(req.params.id, req.params.wid, { word, senses })); }
+  catch (e) {
+    if (e.code === 'DUP') return res.status(409).json({ error: `"${word}" is already in this deck.` });
+    throw e;
+  }
 }));
 
 app.delete('/api/admin/decks/:id/words/:wid', requireAdmin, route(async (req, res) => {

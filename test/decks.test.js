@@ -1,6 +1,16 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { parseWordList, cleanSenses } = require('../decks');
+const { cleanWord, parseWordList, cleanSenses } = require('../decks');
+
+test('cleanWord accepts words and phrases, rejects anything else', () => {
+  assert.equal(cleanWord('  ice   cream '), 'ice cream');
+  assert.equal(cleanWord("don't"), "don't");
+  assert.equal(cleanWord('well-known'), 'well-known');
+  assert.equal(cleanWord('café'), 'café');
+  for (const bad of ['', '   ', '123', '-dash', 'a'.repeat(49), '<b>', 'two|parts', null, undefined]) {
+    assert.equal(cleanWord(bad), null, String(bad));
+  }
+});
 
 test('parseWordList reads words with optional meanings', () => {
   const { entries, invalid } = parseWordList([
